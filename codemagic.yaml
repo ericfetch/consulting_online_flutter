@@ -37,3 +37,29 @@ workflows:
     #   email:
     #     recipients:
     #       - your-email@example.com
+
+  ios-build:
+    name: iOS Build
+    max_build_duration: 60
+    # iOS 打包必须用 macOS 机器（需要 Xcode）
+    instance_type: mac_mini_m2
+
+    environment:
+      # 锁定和本机一致的 Flutter 版本（关键）
+      flutter: 3.32.8
+      # 注意：真正的 iOS 分发（装真机/TestFlight/App Store）必须签名。
+      # 需要 Apple 开发者账号（$99/年），并在 Codemagic 里配置签名后，
+      # 取消下面注释并改用 `flutter build ipa`：
+      # groups:
+      #   - ios_signing
+
+    scripts:
+      - name: Get Flutter packages
+        script: flutter pub get
+
+      # 未签名构建：验证 iOS 代码能编译通过，产出 .app（不能装真机）
+      - name: Build iOS (unsigned)
+        script: flutter build ios --release --no-codesign
+
+    artifacts:
+      - build/ios/iphoneos/Runner.app
