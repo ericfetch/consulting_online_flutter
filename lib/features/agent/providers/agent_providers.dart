@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/network/ws_client.dart';
+import '../../../core/notifications/notification_service.dart';
 import '../../../data/models/conversation.dart';
 import '../../../data/models/message.dart';
 import '../../../data/models/transfer_candidate.dart';
@@ -309,9 +311,25 @@ class AgentAppNotifier extends StateNotifier<AgentAppState> {
             Map<String, ChatMessage>.from(state.latestUnreadMessages);
         newLatestUnread[conversation.id] = message;
         Map<String, int> newUnread;
-        if (conversation.id != state.selectedId) {
+        // 后台时坐席没有在看任何会话，来消息一律弹通知；前台只看非当前会话。
+        final isBackground = WidgetsBinding.instance.lifecycleState !=
+            AppLifecycleState.resumed;
+        debugPrint(
+            '[notify] visitor msg conv=${conversation.id} selected=${state.selectedId} bg=$isBackground');
+        if (conversation.id != state.selectedId || isBackground) {
           newUnread = Map<String, int>.from(state.unreadCounts);
           newUnread[conversation.id] = (newUnread[conversation.id] ?? 0) + 1;
+          // 非当前会话（或 app 在后台）的新消息：弹系统级通知。
+          final visitorTitle = conversation.visitorName.isNotEmpty
+              ? conversation.visitorName
+              : '访客';
+          final visitorIp = conversation.visitorIp;
+          NotificationService.instance.showMessageNotification(
+            title: visitorIp.isNotEmpty
+                ? '$visitorTitle · $visitorIp'
+                : visitorTitle,
+            body: message.displayContent,
+          );
         } else {
           newUnread = state.unreadCounts;
           _clearUnread(conversation.id);
@@ -320,7 +338,6 @@ class AgentAppNotifier extends StateNotifier<AgentAppState> {
           latestUnreadMessages: newLatestUnread,
           unreadCounts: newUnread,
         );
-        // TODO: play notification sound
       }
 
       if (message.conversationId == state.selectedId) {
@@ -495,7 +512,7 @@ class AgentAppNotifier extends StateNotifier<AgentAppState> {
     try {
       final msgs = await _repo.getMessages(id);
       if (state.selectedId == id) {
-        msgs.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        msgs.sort((a, b) => a.createdAt.compareTo(b.createdAt));
         state = state.copyWith(messages: msgs);
       }
     } catch (_) {

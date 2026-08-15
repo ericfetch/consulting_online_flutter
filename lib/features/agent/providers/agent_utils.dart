@@ -242,7 +242,7 @@ List<ChatMessage> upsertMessage(
   } else {
     next = [...messages, message];
   }
-  next.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  next.sort((a, b) => a.createdAt.compareTo(b.createdAt));
   return next;
 }
 
@@ -298,7 +298,7 @@ List<ChatMessage> replaceOptimisticMessage(
     }
   }
   next.add(message);
-  next.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  next.sort((a, b) => a.createdAt.compareTo(b.createdAt));
   return next;
 }
 

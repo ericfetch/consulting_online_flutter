@@ -41,6 +41,10 @@ class WsClient {
   int _reconnectAttempts = 0;
   String? _sessionCookie;
 
+  /// 标记「主动断开」（退出登录 / 鉴权失败）：
+  /// 此时 `_onDone`/`_onError` 不再自动重连，避免用失效 cookie 反复重连造成死循环。
+  bool _manuallyClosed = false;
+
   final _eventController = StreamController<RealtimeEvent>.broadcast();
   final _statusController = StreamController<WsConnectionStatus>.broadcast();
 
@@ -54,6 +58,7 @@ class WsClient {
       return;
     }
 
+    _manuallyClosed = false;
     if (cookie != null) {
       _sessionCookie = cookie;
     }
@@ -87,7 +92,15 @@ class WsClient {
       final json = jsonDecode(message as String) as Map<String, dynamic>;
       final event = RealtimeEvent.fromJson(json);
 
+      if (event.type == 'message:new') {
+        debugPrint('[ws] recv message:new at ${DateTime.now().toIso8601String()}');
+      }
+
       if (event.type == 'auth:failed') {
+        // 鉴权失败：停止重连并取消定时器，避免失效 cookie 反复重连。
+        _manuallyClosed = true;
+        _reconnectTimer?.cancel();
+        _heartbeatTimer?.cancel();
         _updateStatus(WsConnectionStatus.disconnected);
       }
 
@@ -98,15 +111,20 @@ class WsClient {
   }
 
   void _onError(dynamic error) {
-    debugPrint('WebSocket error: $error');
+    debugPrint('[ws] error at ${DateTime.now().toIso8601String()}: $error');
     _updateStatus(WsConnectionStatus.disconnected);
-    _scheduleReconnect();
+    if (!_manuallyClosed) {
+      _scheduleReconnect();
+    }
   }
 
   void _onDone() {
+    debugPrint('[ws] done at ${DateTime.now().toIso8601String()}');
     _heartbeatTimer?.cancel();
     _updateStatus(WsConnectionStatus.disconnected);
-    _scheduleReconnect();
+    if (!_manuallyClosed) {
+      _scheduleReconnect();
+    }
   }
 
   void _startHeartbeat() {
@@ -115,6 +133,7 @@ class WsClient {
       const Duration(milliseconds: AppConstants.heartbeatInterval),
       (_) {
         if (_status == WsConnectionStatus.connected) {
+          debugPrint('[ws] heartbeat at ${DateTime.now().toIso8601String()}');
           send('agent:heartbeat', {});
         }
       },
@@ -180,6 +199,7 @@ class WsClient {
   }
 
   void disconnect() {
+    _manuallyClosed = true;
     _heartbeatTimer?.cancel();
     _reconnectTimer?.cancel();
     _channel?.sink.close();

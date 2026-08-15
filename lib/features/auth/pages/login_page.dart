@@ -17,6 +17,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _emailFocusNode = FocusNode();
+  final _passwordFocusNode = FocusNode();
   bool _obscurePassword = true;
   bool _isLoading = false;
 
@@ -24,6 +26,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _emailFocusNode.dispose();
+    _passwordFocusNode.dispose();
     super.dispose();
   }
 
@@ -56,6 +60,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
         );
       }
     }
+  }
+
+  /// 手指按下瞬间，若焦点在别的输入框，先收起它的键盘。
+  /// 这样随后聚焦本框时是「干净的 show」，避免 MIUI 输入法在切换
+  /// 键盘类型（邮箱↔密码）时丢掉 show 请求、导致要点两次才出键盘。
+  void _prepareFocus(FocusNode target) {
+    if (target.hasFocus) return;
+    FocusManager.instance.primaryFocus?.unfocus();
   }
 
   @override
@@ -142,45 +154,56 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          TextFormField(
-            controller: _emailController,
-            keyboardType: TextInputType.emailAddress,
-            textInputAction: TextInputAction.next,
-            decoration: const InputDecoration(
-              labelText: '邮箱',
-              hintText: '请输入邮箱地址',
-              prefixIcon: Icon(Icons.email_outlined),
+          Listener(
+            onPointerDown: (_) => _prepareFocus(_emailFocusNode),
+            child: TextFormField(
+              controller: _emailController,
+              focusNode: _emailFocusNode,
+              keyboardType: TextInputType.emailAddress,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) => _passwordFocusNode.requestFocus(),
+              decoration: const InputDecoration(
+                labelText: '邮箱',
+                hintText: '请输入邮箱地址',
+                prefixIcon: Icon(Icons.email_outlined),
+              ),
+              validator: (value) => Validators.compose(value, [
+                (v) => Validators.required(v),
+                (v) => Validators.email(v),
+              ]),
             ),
-            validator: (value) => Validators.compose(value, [
-              (v) => Validators.required(v),
-              (v) => Validators.email(v),
-            ]),
           ),
           const SizedBox(height: 16),
-          TextFormField(
-            controller: _passwordController,
-            obscureText: _obscurePassword,
-            textInputAction: TextInputAction.done,
-            onFieldSubmitted: (_) => _handleLogin(),
-            decoration: InputDecoration(
-              labelText: '密码',
-              hintText: '请输入密码',
-              prefixIcon: const Icon(Icons.lock_outlined),
-              suffixIcon: IconButton(
-                icon: Icon(
-                  _obscurePassword
-                      ? Icons.visibility_outlined
-                      : Icons.visibility_off_outlined,
+          Listener(
+            onPointerDown: (_) => _prepareFocus(_passwordFocusNode),
+            child: TextFormField(
+              controller: _passwordController,
+              focusNode: _passwordFocusNode,
+              obscureText: _obscurePassword,
+              textInputAction: TextInputAction.done,
+              onFieldSubmitted: (_) => _handleLogin(),
+              decoration: InputDecoration(
+                labelText: '密码',
+                hintText: '请输入密码',
+                prefixIcon: const Icon(Icons.lock_outlined),
+                suffixIcon: ExcludeFocus(
+                  child: IconButton(
+                    icon: Icon(
+                      _obscurePassword
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                    ),
+                    onPressed: () {
+                      setState(() => _obscurePassword = !_obscurePassword);
+                    },
+                  ),
                 ),
-                onPressed: () {
-                  setState(() => _obscurePassword = !_obscurePassword);
-                },
               ),
+              validator: (value) => Validators.compose(value, [
+                (v) => Validators.required(v),
+                (v) => Validators.password(v),
+              ]),
             ),
-            validator: (value) => Validators.compose(value, [
-              (v) => Validators.required(v),
-              (v) => Validators.password(v),
-            ]),
           ),
           const SizedBox(height: 24),
           FilledButton(

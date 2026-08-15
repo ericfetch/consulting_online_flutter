@@ -26,6 +26,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   final _scrollController = ScrollController();
   bool _showEmojiPicker = false;
   bool _isSending = false;
+  bool _isNearBottom = true;
   String? _replyingTo;
   final FocusNode _focusNode = FocusNode();
 
@@ -44,6 +45,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         ref
             .read(agentAppProvider.notifier)
             .selectConversation(widget.conversationId);
+      } else {
+        // 会话已选中且消息已在内存中：直接定位到最新消息。
+        _scrollToBottom(animated: false);
       }
     });
   }
@@ -56,15 +60,23 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     super.dispose();
   }
 
-  void _onScroll() {}
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    _isNearBottom = position.pixels >= position.maxScrollExtent - 60;
+  }
 
-  void _scrollToBottom() {
-    if (_scrollController.hasClients) {
+  void _scrollToBottom({bool animated = true}) {
+    if (!_scrollController.hasClients) return;
+    final target = _scrollController.position.maxScrollExtent;
+    if (animated) {
       _scrollController.animateTo(
-        0,
+        target,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
+    } else {
+      _scrollController.jumpTo(target);
     }
   }
 
@@ -264,6 +276,22 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       },
     );
 
+    ref.listen<List<ChatMessage>>(
+      agentAppProvider.select((s) => s.messages),
+      (previous, next) {
+        if (next.isEmpty) return;
+        if (previous == null || previous.isEmpty) {
+          // 首次加载：直接定位到最新消息。
+          WidgetsBinding.instance.addPostFrameCallback(
+              (_) => _scrollToBottom(animated: false));
+        } else if (_isNearBottom && next.length != previous.length) {
+          // 有新消息且用户还在底部：跟随滚动到底部。
+          WidgetsBinding.instance.addPostFrameCallback(
+              (_) => _scrollToBottom(animated: true));
+        }
+      },
+    );
+
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -355,15 +383,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     onTap: () => FocusScope.of(context).unfocus(),
                     child: ListView.builder(
                       controller: _scrollController,
-                      reverse: true,
+                      reverse: false,
                       padding: const EdgeInsets.all(16),
                       itemCount: messages.length,
                       itemBuilder: (context, index) {
                         final message = messages[index];
-                        final showAvatar = index == messages.length - 1 ||
-                            messages[index + 1].senderUserId !=
+                        final showAvatar = index == 0 ||
+                            messages[index - 1].senderUserId !=
                                 message.senderUserId ||
-                            messages[index + 1].senderType !=
+                            messages[index - 1].senderType !=
                                 message.senderType;
                         final isTranslating =
                             appState.translatingMessageIds.contains(message.id);

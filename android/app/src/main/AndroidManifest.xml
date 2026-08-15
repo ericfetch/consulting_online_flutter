@@ -1,6 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- 网络访问（应用核心依赖） -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- 新消息系统通知（Android 13+ 运行时权限） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- 前台服务保活：后台保持 WebSocket 连接以接收新消息（dataSync 类型） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <!-- 语音消息录音 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <!-- 拍照 / 相册选图（image_picker） -->
@@ -41,6 +45,13 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- 前台服务（flutter_foreground_task）：保活后台连接。
+             服务名不可更改，foregroundServiceType 需与启动时的类型一致。 -->
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

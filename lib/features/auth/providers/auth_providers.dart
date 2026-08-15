@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/ws_client.dart';
+import '../../../core/notifications/foreground_service.dart';
 import '../../../core/utils/storage.dart';
 import '../../../data/models/user.dart';
 import '../../../data/repositories/auth_repository.dart';
@@ -56,6 +57,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         final user = await _authRepository.getCurrentUser();
         if (user != null) {
           _wsClient.connect();
+          ForegroundService.instance.start();
           state = state.copyWith(
             status: AuthStatus.authenticated,
             user: user,
@@ -93,6 +95,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       }
 
       _wsClient.connect();
+      ForegroundService.instance.start();
 
       state = state.copyWith(
         status: AuthStatus.authenticated,
@@ -118,8 +121,19 @@ class AuthNotifier extends StateNotifier<AuthState> {
       // Ignore logout errors
     }
 
+    // 主动断开并清除 cookie，防止失效 cookie 触发重连死循环。
+    _wsClient.setCookie(null);
     _wsClient.disconnect();
-    await _storage.removeCookie();
+    try {
+      await ForegroundService.instance.stop();
+    } catch (e) {
+      // 前台服务停止失败不影响退出。
+    }
+    try {
+      await _storage.removeCookie();
+    } catch (e) {
+      // 清理本地 cookie 失败不影响退出。
+    }
 
     state = const AuthState(
       status: AuthStatus.unauthenticated,

@@ -1,0 +1,39 @@
+# Codemagic 构建配置
+# 文档：https://docs.codemagic.io/yaml/building-a-flutter-app/
+#
+# 说明：这里把 Flutter 版本锁定为 3.32.8，与你本机开发环境保持一致，
+# 避免 Codemagic 默认用最新 Flutter 导致 Gradle/AGP 版本对不上而构建失败。
+
+workflows:
+  android-build:
+    name: Android Build
+    max_build_duration: 60
+    # Flutter 默认推荐机型；想省钱可换成 linux（对纯 Android 打包足够）
+    instance_type: mac_mini_m2
+
+    environment:
+      # 锁定和本机一致的 Flutter 版本（关键）
+      flutter: 3.32.8
+      # 将来要发布到 Google Play 时，取消下面注释并在 Codemagic 配置签名组：
+      # groups:
+      #   - android_signing
+
+    scripts:
+      - name: Get Flutter packages
+        script: flutter pub get
+
+      - name: Build release APK
+        script: flutter build apk --release
+
+      # 将来要上架 Play 商店时，改用 app bundle（需正式签名，见上 groups）：
+      # - name: Build app bundle
+      #   script: flutter build appbundle --release
+
+    artifacts:
+      - build/app/outputs/flutter-apk/app-release.apk
+
+    # 构建完成后把 APK 邮件发给你（可选，改成你的邮箱并取消注释）：
+    # publishing:
+    #   email:
+    #     recipients:
+    #       - your-email@example.com
