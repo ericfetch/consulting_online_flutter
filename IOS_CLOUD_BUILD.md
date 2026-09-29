@@ -26,6 +26,8 @@ iOS 使用独立构建号，避免把 `pubspec.yaml` 的 Android 日期构建号
 
 云端固定 Flutter `3.38.10`、Xcode `26.2`、CocoaPods `1.16.2`，Android 工具链保持原配置。iOS 最低支持版本为 `15.0`，Podfile、Runner 各构建配置及 AppFrameworkInfo.plist 保持一致。
 
+当前客户端通过 HTTPS/WSS 连接服务，没有自行实现非豁免加密；`Info.plist` 设置 `ITSAppUsesNonExemptEncryption=false`，避免上传后重复要求补充加密声明。以后若引入自定义加密、端到端加密或 VPN，需要重新核对该声明。
+
 上传完成后需等待 Apple 处理，才能在 TestFlight 选择构建并分发给测试组。工作流不提交 App Store 审核，也不自动提交外部测试 Beta Review；`submit_to_testflight: false` 控制的是后者，不会关闭 IPA 上传。测试组沿用现有设置。
 
 ## 费用约束
@@ -40,6 +42,11 @@ iOS 使用独立构建号，避免把 `pubspec.yaml` 的 Android 日期构建号
 - 构建源码提交：`9714d73f7f2dc1fe5cf8a5e5f1f54647eb0c56e2`
 - 本机 Flutter 静态检查、28 项 Flutter 测试和 3 项发布脚本测试通过；云端检查、测试、签名和上传通过。
 - 新 SDK 的弃用 info 不阻断构建，warning/error 仍阻断，保留旧 Android 工具链兼容性。
+
+同日追加构建 `1.0.1 (4)`，将最低系统版本统一为 iOS 15，并补齐加密声明。静态检查、测试、签名、打包和上传均通过，耗时 5 分 30 秒。
+
+- [iOS 15 构建记录](https://codemagic.io/app/6a7fb7902a6549e95461aba5/build/6abb7a8afac8c44ea934cb43)
+- 构建源码提交：`093e0bf4f7093a647da66025135c4a0a320032e6`
 
 ## 官方说明
 
