@@ -43,3 +43,10 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Apple credentials and signing material belong in Codemagic, never in Git.
+*.p8
+*.p12
+*.mobileprovision
+*.pem
+**/__pycache__/

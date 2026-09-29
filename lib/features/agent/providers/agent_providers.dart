@@ -6,12 +6,14 @@ import '../../../core/constants/app_constants.dart';
 import '../../../core/network/ws_client.dart';
 import '../../../core/notifications/notification_service.dart';
 import '../../../data/models/conversation.dart';
+import '../../../data/models/copilot.dart';
 import '../../../data/models/message.dart';
 import '../../../data/models/transfer_candidate.dart';
 import '../../../data/models/user.dart';
 import '../../../data/repositories/agent_repository.dart';
 import '../../auth/providers/auth_providers.dart';
 import 'agent_utils.dart';
+import 'agent_availability.dart';
 
 class AgentAppState {
   final bool connected;
@@ -45,11 +47,9 @@ class AgentAppState {
     required this.presenceClock,
     this.translatingMessageIds = const {},
     this.quickReplies = const [
-      '您好，我是在线客服，可以先了解一下您的需求吗？',
-      '这个活动现在可以预约，我帮您看一下名额。',
-      '方便留个手机号吗？我让客服尽快联系您。',
-      '您现在主要关注价格、效果，还是交付周期？',
-      '我发您一张说明图，您看完我再帮您确认方案。',
+      '我们的流程是：1. 填写基本资料并上传现有检查报告；2. 我们为您匹配对应科室的医生；3. 和您预约时间，确认后支付订金；4. 为您安排第二诊疗意见。您可以先提供已有资料，我们会说明下一步。',
+      '请先填写您的姓名、性别、国家或地区、年龄和主要病种，并上传已有检查报告。资料不必一次齐全，先提供您手头已有的即可。',
+      '收到资料后，我们会为您匹配对应科室的医生，再与您确认预约时间和订金安排。',
     ],
     this.settings,
   });
@@ -188,10 +188,11 @@ class AgentAppNotifier extends StateNotifier<AgentAppState> {
   Timer? _presenceClockTimer;
   final Set<String> _knownConversationIds = {};
   final Map<String, Timer> _messageTimeouts = {};
+  Future<void> _statusQueue = Future.value();
 
-  AgentAppNotifier(this._repo, this._ws, this._ref)
+  AgentAppNotifier(this._repo, this._ws, this._ref, {bool active = true})
       : super(AgentAppState(presenceClock: DateTime.now())) {
-    _init();
+    if (active) _init();
   }
 
   void _init() async {
@@ -199,8 +200,12 @@ class AgentAppNotifier extends StateNotifier<AgentAppState> {
     _wsStatusSubscription = _ws.statusStream.listen(_handleWsStatus);
 
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     final storedReplies = prefs.getStringList(AppConstants.quickRepliesKey);
-    if (storedReplies != null) {
+    final oldDefaults = storedReplies?.length == 5 &&
+        storedReplies?.first == '您好，我是在线客服，可以先了解一下您的需求吗？' &&
+        storedReplies?.last == '我发您一张说明图，您看完我再帮您确认方案。';
+    if (storedReplies != null && !oldDefaults) {
       state = state.copyWith(quickReplies: storedReplies);
     }
 
@@ -209,6 +214,7 @@ class AgentAppNotifier extends StateNotifier<AgentAppState> {
       _applySettings(settings);
     } catch (_) {}
 
+    if (!mounted) return;
     _ws.connect();
 
     _presenceClockTimer = Timer.periodic(
@@ -224,11 +230,28 @@ class AgentAppNotifier extends StateNotifier<AgentAppState> {
   }
 
   void _applySettings(AgentUser next) {
-    state = state.copyWith(settings: next);
-    _ref.read(authProvider.notifier).updateUser(next);
+    if (!mounted) return;
+    final merged = latestAgentAvailability(state.settings, next);
+    state = state.copyWith(settings: merged);
+    _ref.read(authProvider.notifier).updateUser(merged);
   }
 
   void _handleWsEvent(RealtimeEvent event) {
+    if (!mounted) return;
+    if (event.type == 'agent:status') {
+      final current = state.settings;
+      final payload = event.payload;
+      if (current != null &&
+          payload?['userId'] == current.id &&
+          ['ONLINE', 'BUSY', 'OFFLINE'].contains(payload?['agentStatus'])) {
+        _applySettings(AgentUser.fromJson({
+          ...current.toJson(),
+          'agentStatus': payload!['agentStatus'],
+          'updatedAt': payload['updatedAt']
+        }));
+      }
+      return;
+    }
     if (event.type == 'auth:failed') {
       _ref.read(authProvider.notifier).logout();
       return;
@@ -312,8 +335,8 @@ class AgentAppNotifier extends StateNotifier<AgentAppState> {
         newLatestUnread[conversation.id] = message;
         Map<String, int> newUnread;
         // 后台时坐席没有在看任何会话，来消息一律弹通知；前台只看非当前会话。
-        final isBackground = WidgetsBinding.instance.lifecycleState !=
-            AppLifecycleState.resumed;
+        final isBackground =
+            WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed;
         debugPrint(
             '[notify] visitor msg conv=${conversation.id} selected=${state.selectedId} bg=$isBackground');
         if (conversation.id != state.selectedId || isBackground) {
@@ -436,8 +459,10 @@ class AgentAppNotifier extends StateNotifier<AgentAppState> {
             event.payload!['conversation'] as Map<String, dynamic>);
         _upsertConversation(conv);
       }
-      final newMessages = upsertMessage(state.messages, updated);
-      state = state.copyWith(messages: newMessages);
+      if (updated.conversationId == state.selectedId) {
+        final newMessages = upsertMessage(state.messages, updated);
+        state = state.copyWith(messages: newMessages);
+      }
       return;
     }
 
@@ -540,6 +565,10 @@ class AgentAppNotifier extends StateNotifier<AgentAppState> {
   }
 
   void sendAgentMessage(String body, {Map<String, dynamic>? metadata}) {
+    if (isCopilotMention(body)) {
+      state = state.copyWith(error: '@agent 求助请通过内部助手发送');
+      return;
+    }
     final selectedId = state.selectedId;
     final currentSettings = state.settings;
     if (selectedId == null || currentSettings == null) return;
@@ -611,24 +640,31 @@ class AgentAppNotifier extends StateNotifier<AgentAppState> {
     state = state.copyWith(error: error, clearError: error == null);
   }
 
-  Future<void> updateStatus(AgentStatus newStatus) async {
-    try {
-      final updated = await _repo.updateSettings({
-        'agentStatus': newStatus == AgentStatus.online
-            ? 'ONLINE'
-            : newStatus == AgentStatus.busy
-                ? 'BUSY'
-                : 'OFFLINE',
-      });
-      _applySettings(updated);
-    } catch (e) {
-      state = state.copyWith(error: e.toString());
-    }
+  Future<void> updateStatus(AgentStatus newStatus) {
+    _statusQueue = _statusQueue.then((_) async {
+      if (!mounted) return;
+      try {
+        final updated = await _repo.updateSettings({
+          'agentStatus': newStatus == AgentStatus.online
+              ? 'ONLINE'
+              : newStatus == AgentStatus.busy
+                  ? 'BUSY'
+                  : 'OFFLINE',
+        });
+        _applySettings(updated);
+      } catch (e) {
+        if (mounted) state = state.copyWith(error: e.toString());
+      }
+    });
+    return _statusQueue;
   }
 
   Future<void> updateSettings(Map<String, dynamic> data) async {
     try {
-      final updated = await _repo.updateSettings(data);
+      final profileUpdates = Map<String, dynamic>.from(data)
+        ..remove('agentStatus');
+      final updated = await _repo.updateSettings(profileUpdates);
+      if (!mounted) return;
       _applySettings(updated);
       final newConversations = state.conversations.map((c) {
         if (c.assigneeId == updated.id) {
@@ -780,9 +816,10 @@ class AgentAppNotifier extends StateNotifier<AgentAppState> {
 
 final agentAppProvider =
     StateNotifierProvider<AgentAppNotifier, AgentAppState>((ref) {
+  final userId = ref.watch(authProvider.select((s) => s.user?.id));
   final repo = ref.watch(agentRepositoryProvider);
   final ws = ref.watch(wsClientProvider);
-  return AgentAppNotifier(repo, ws, ref);
+  return AgentAppNotifier(repo, ws, ref, active: userId != null);
 });
 
 final transferCandidatesProvider =

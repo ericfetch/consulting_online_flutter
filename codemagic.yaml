@@ -1,8 +1,8 @@
 # Codemagic 构建配置
 # 文档：https://docs.codemagic.io/yaml/building-a-flutter-app/
 #
-# 说明：这里把 Flutter 版本锁定为 3.32.8，与你本机开发环境保持一致，
-# 避免 Codemagic 默认用最新 Flutter 导致 Gradle/AGP 版本对不上而构建失败。
+# Android 和旧的未签名流程保持原工具链；TestFlight 单独使用支持 Xcode 26 的 Flutter。
+# 首次接入请看 IOS_CLOUD_BUILD.md，Apple 密钥和签名文件只存 Codemagic。
 
 workflows:
   android-build:
@@ -63,3 +63,69 @@ workflows:
 
     artifacts:
       - build/ios/iphoneos/Runner.app
+
+  ios-testflight:
+    name: iOS · TestFlight
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+
+    integrations:
+      app_store_connect: consulting-app-store
+
+    environment:
+      flutter: 3.38.10
+      xcode: "26.2"
+      cocoapods: "1.16.2"
+      groups:
+        - sana_ios_signing
+      vars:
+        APP_STORE_APPLE_ID: "6808095729"
+        BUNDLE_ID: com.consulting.consultingOnlineApp
+
+    # 手动启动此流程。首次签名成功后再按需要增加自动触发规则。
+    scripts:
+      - name: Verify existing App and choose iOS build number
+        script: python3 scripts/prepare_ios_release.py
+
+      - name: Get Flutter packages
+        script: flutter pub get
+
+      - name: Validate release scripts and Flutter code
+        script: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+          flutter analyze --no-pub
+          flutter test --no-pub
+
+      - name: Install iOS dependencies
+        script: |
+          set -euo pipefail
+          cd ios
+          pod install
+
+      - name: Fetch or create App Store signing files
+        script: |
+          set -euo pipefail
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+          keychain add-certificates
+          xcode-project use-profiles --project ios/Runner.xcodeproj
+
+      - name: Build signed IPA
+        script: |
+          set -euo pipefail
+          flutter build ipa --release --no-pub \
+            --build-number="$IOS_BUILD_NUMBER" \
+            --export-options-plist="$HOME/export_options.plist"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/ios/archive/*.xcarchive/dSYMs/*.dSYM
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        # 上传后在 TestFlight 查看；此开关控制外部测试的 Beta Review，不是上传开关。
+        submit_to_testflight: false
+        submit_to_app_store: false

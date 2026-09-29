@@ -67,8 +67,9 @@ String workspaceSiteName(
   final visibleSites =
       (sites ?? []).where((s) => siteDisplayName(s).isNotEmpty).toList();
   if (visibleSites.length == 1) return siteDisplayName(visibleSites[0]);
-  if (visibleSites.length > 1)
+  if (visibleSites.length > 1) {
     return '${siteDisplayName(visibleSites[0])} 等 ${visibleSites.length} 个站点';
+  }
 
   final names = conversations
       .map((c) => c.companyName.isNotEmpty ? c.companyName : c.siteName)
@@ -82,6 +83,8 @@ String workspaceSiteName(
 
 String previewMessage(ChatMessage message) {
   final mediaType = messageMediaType(message);
+  if (mediaType == 'audio') return '[语音/音频]';
+  if (mediaType == 'document') return '[文件]';
   if (mediaType == 'video') return '[视频]';
   if (mediaType == 'sticker') return '[贴纸]';
   if (mediaType == 'image') return '[图片]';
@@ -103,10 +106,12 @@ bool isImageMessage(ChatMessage message) {
 }
 
 String? messageMediaType(ChatMessage message) {
-  if (message.metadata?.whatsappMedia?.type != null)
+  if (message.metadata?.whatsappMedia?.type != null) {
     return message.metadata!.whatsappMedia!.type;
-  if (message.metadata?.attachments.isNotEmpty == true)
+  }
+  if (message.metadata?.attachments.isNotEmpty == true) {
     return message.metadata!.attachments.first.type;
+  }
   final imageMatches = RegExp(
           r'(https?:\/\/\S+\.(?:png|jpe?g|gif|webp)(?:\?\S*)?|\/(?:api\/)?uploads\/\S+\.(?:png|jpe?g|gif|webp))',
           caseSensitive: false)
@@ -119,10 +124,12 @@ String visitorListPreview(Conversation conversation, VisitorPresence? state,
     ChatMessage? latestUnread, String? draft) {
   if (draft != null && draft.isNotEmpty) return '正在输入：$draft';
   if (latestUnread != null) return previewMessage(latestUnread);
-  if (state == VisitorPresence.browsing && conversation.landingUrl.isNotEmpty)
+  if (state == VisitorPresence.browsing && conversation.landingUrl.isNotEmpty) {
     return '正在浏览：${conversation.landingUrl}';
-  if (conversation.channel == ConversationChannel.whatsapp)
+  }
+  if (conversation.channel == ConversationChannel.whatsapp) {
     return 'WhatsApp 对话';
+  }
   return conversation.landingUrl.isNotEmpty
       ? '当前页面：${conversation.landingUrl}'
       : (conversation.campaign.isNotEmpty ? conversation.campaign : '未记录页面');

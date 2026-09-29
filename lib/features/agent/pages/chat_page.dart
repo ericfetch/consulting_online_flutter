@@ -1,13 +1,20 @@
 import 'package:flutter/material.dart';
+import '../../../data/repositories/customer_repository.dart';
+import '../../../data/repositories/agent_repository.dart';
+import '../../customers/customer_pages.dart';
+import '../widgets/message_assistance.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../data/models/conversation.dart';
+import '../../../data/models/copilot.dart';
 import '../../../data/models/message.dart';
 import '../../../shared/widgets/widgets.dart';
 import '../providers/agent_providers.dart';
+import '../providers/copilot_provider.dart';
 import '../providers/agent_utils.dart';
 import '../widgets/message_bubble.dart';
+import '../widgets/copilot_panel.dart';
 import '../widgets/emoji_picker.dart';
 import '../widgets/visitor_panel.dart';
 import '../widgets/quick_replies_sheet.dart';
@@ -28,18 +35,22 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   bool _isSending = false;
   bool _isNearBottom = true;
   String? _replyingTo;
+  bool _mentionMenu = false;
+  String? _pendingQuickRun, _pendingQuickDraft, _firstMessageId;
   final FocusNode _focusNode = FocusNode();
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
+    _messageController.addListener(_onComposerChanged);
     _focusNode.addListener(() {
       if (_focusNode.hasFocus && _showEmojiPicker) {
         setState(() => _showEmojiPicker = false);
       }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final currentSelectedId = ref.read(agentAppProvider).selectedId;
       if (currentSelectedId != widget.conversationId) {
         ref
@@ -53,11 +64,130 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   @override
+  void didUpdateWidget(ChatPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.conversationId != widget.conversationId) {
+      _messageController.clear();
+      _replyingTo = null;
+      _isSending = false;
+      _showEmojiPicker = false;
+      _pendingQuickRun = null;
+      _pendingQuickDraft = null;
+      _firstMessageId = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ref
+              .read(agentAppProvider.notifier)
+              .selectConversation(widget.conversationId);
+        }
+      });
+    }
+  }
+
+  @override
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
     _focusNode.dispose();
     super.dispose();
+  }
+
+  void _onComposerChanged() {
+    if (mounted) {
+      setState(() {
+        _mentionMenu = RegExp(r'^\s*@(?:a(?:g(?:e(?:n(?:t)?)?)?)?)?$',
+                caseSensitive: false)
+            .hasMatch(_messageController.text);
+      });
+    }
+  }
+
+  void _insertAgent([String? command]) {
+    final current = _messageController.text;
+    final question =
+        copilotQuestion(current).replaceFirst(RegExp(r'^@\w*\s*'), '');
+    _messageController.text = '@agent ${command ?? question}';
+    _messageController.selection =
+        TextSelection.collapsed(offset: _messageController.text.length);
+    setState(() => _mentionMenu = command == null);
+    _focusNode.requestFocus();
+  }
+
+  Future<void> _quickReply(String text) async {
+    final id = widget.conversationId;
+    final draft = _messageController.text;
+    if (ref.read(copilotProvider(id)).snapshot?.enabled != true) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请先启用 AI 助手，以便转换为客户语言')));
+      return;
+    }
+    final ok = await ref.read(copilotProvider(id).notifier).ask(
+        '将以下中文快捷回复结合当前上下文转换为客户使用的语言，使用 show_reply_options，只给一个选项；staffText 提供完整中文译文，不添加未经确认的承诺。\n$text',
+        sourceMessageId: _latestMessageId(ref.read(agentAppProvider).messages),
+        purpose: 'quick_reply');
+    if (!mounted || widget.conversationId != id || !ok) return;
+    final runId = ref.read(copilotProvider(id).notifier).lastRequestedRunId;
+    if (runId != null) {
+      _pendingQuickRun = runId;
+      _pendingQuickDraft = draft;
+      _fillQuickReply(ref.read(copilotProvider(id)));
+    }
+  }
+
+  void _fillQuickReply(CopilotState state) {
+    final run =
+        state.snapshot?.runs.where((r) => r.id == _pendingQuickRun).firstOrNull;
+    if (run?.completed != true) return;
+    final reply = run!.events
+        .where((e) => e.card?.kind == 'replies')
+        .lastOrNull
+        ?.card
+        ?.options
+        .firstOrNull;
+    if (reply != null && _messageController.text == _pendingQuickDraft) {
+      _adoptReply(reply, run.sourceMessageId);
+    }
+    _pendingQuickRun = null;
+    _pendingQuickDraft = null;
+  }
+
+  Future<void> _intakeLink() async {
+    final id = widget.conversationId;
+    try {
+      final link = await ref.read(customerRepositoryProvider).createIntake(id);
+      if (!mounted || id != widget.conversationId) return;
+      _messageController.text =
+          'Please complete your basic information and upload any reports you have: $link';
+      _messageController.selection =
+          TextSelection.collapsed(offset: _messageController.text.length);
+      _focusNode.requestFocus();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
+  }
+
+  String? _latestMessageId(List<ChatMessage> messages) => messages
+      .where((message) =>
+          message.conversationId == widget.conversationId &&
+          !message.isSystem &&
+          !message.id.startsWith('optimistic:'))
+      .lastOrNull
+      ?.id;
+
+  void _adoptReply(CopilotReply reply, String? sourceId) {
+    if (ref.read(agentAppProvider).selectedId != widget.conversationId) {
+      return;
+    }
+    setState(() {
+      _replyingTo = null;
+    });
+    _messageController.text = reply.customerText;
+    _messageController.selection =
+        TextSelection.collapsed(offset: reply.customerText.length);
+    _focusNode.requestFocus();
   }
 
   void _onScroll() {
@@ -81,28 +211,53 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Future<void> _sendMessage() async {
+    final conversationId = widget.conversationId;
     final text = _messageController.text.trim();
     if (text.isEmpty || _isSending) return;
-
-    setState(() => _isSending = true);
-    _messageController.clear();
-
+    if (ref.read(agentAppProvider).selectedId != widget.conversationId) return;
+    if (isCopilotMention(text)) {
+      setState(() {
+        _isSending = true;
+      });
+      final success = await ref
+          .read(copilotProvider(widget.conversationId).notifier)
+          .ask(text,
+              sourceMessageId:
+                  _latestMessageId(ref.read(agentAppProvider).messages));
+      if (!mounted || widget.conversationId != conversationId) return;
+      if (success && _messageController.text.trim() == text) {
+        _messageController.clear();
+      }
+      setState(() => _isSending = false);
+      return;
+    }
+    if (!ref.read(agentAppProvider).selectedCanSend) return;
     ref.read(agentAppProvider.notifier).sendTextMessage(text);
+    _messageController.clear();
     setState(() {
       _replyingTo = null;
-      _isSending = false;
     });
 
     _scrollToBottom();
   }
 
   Future<void> _pickImage() async {
+    final conversationId = widget.conversationId;
     final picker = ImagePicker();
     final image = await picker.pickImage(source: ImageSource.gallery);
-    if (image != null) {
+    if (image != null &&
+        mounted &&
+        widget.conversationId == conversationId &&
+        ref.read(agentAppProvider).selectedId == conversationId) {
       setState(() => _isSending = true);
       final url =
           await ref.read(agentAppProvider.notifier).uploadImage(image.path);
+      if (!mounted) return;
+      if (widget.conversationId != conversationId ||
+          ref.read(agentAppProvider).selectedId != conversationId) {
+        setState(() => _isSending = false);
+        return;
+      }
       if (url != null) {
         ref.read(agentAppProvider.notifier).sendImageMessage(url);
       }
@@ -117,12 +272,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       builder: (context) => QuickRepliesSheet(
         quickReplies: quickReplies,
         onSelected: (text) {
-          _messageController.text = text;
-          _messageController.selection = TextSelection.fromPosition(
-            TextPosition(offset: text.length),
-          );
           Navigator.pop(context);
-          _focusNode.requestFocus();
+          _quickReply(text);
         },
       ),
     );
@@ -226,8 +377,32 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   @override
   Widget build(BuildContext context) {
     final appState = ref.watch(agentAppProvider);
+    final copilot = ref.watch(copilotProvider(widget.conversationId));
     final conversation = appState.selected;
-    final messages = appState.messages;
+    final messages = appState.messages
+        .where((m) => m.conversationId == widget.conversationId)
+        .toList();
+    final firstId =
+        messages.where((m) => !m.id.startsWith('optimistic:')).firstOrNull?.id;
+    if (_firstMessageId != firstId) {
+      _firstMessageId = firstId;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ref
+              .read(copilotProvider(widget.conversationId).notifier)
+              .setMessageRange(firstId);
+        }
+      });
+    }
+    ref.listen<CopilotState>(copilotProvider(widget.conversationId),
+        (previous, next) {
+      _fillQuickReply(next);
+      if (_isNearBottom) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _scrollToBottom(animated: false);
+        });
+      }
+    });
     final colorScheme = Theme.of(context).colorScheme;
     final presenceState = appState.selectedPresenceState;
     final displayName = visitorDisplayName(conversation);
@@ -235,7 +410,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final isVisitorTyping = draft.isNotEmpty;
     final canSend = appState.selectedCanSend;
 
-    if (conversation == null) {
+    if (conversation == null || conversation.id != widget.conversationId) {
       return Scaffold(
         appBar: AppBar(),
         body: Center(
@@ -282,12 +457,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         if (next.isEmpty) return;
         if (previous == null || previous.isEmpty) {
           // 首次加载：直接定位到最新消息。
-          WidgetsBinding.instance.addPostFrameCallback(
-              (_) => _scrollToBottom(animated: false));
+          WidgetsBinding.instance
+              .addPostFrameCallback((_) => _scrollToBottom(animated: false));
         } else if (_isNearBottom && next.length != previous.length) {
           // 有新消息且用户还在底部：跟随滚动到底部。
-          WidgetsBinding.instance.addPostFrameCallback(
-              (_) => _scrollToBottom(animated: true));
+          WidgetsBinding.instance
+              .addPostFrameCallback((_) => _scrollToBottom(animated: true));
         }
       },
     );
@@ -316,19 +491,25 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    Text(
-                      isVisitorTyping
-                          ? '正在输入...'
-                          : isActive
-                              ? '在线'
-                              : '离线',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isVisitorTyping
-                            ? AppTheme.infoColor
-                            : colorScheme.onSurfaceVariant,
+                    Row(children: [
+                      Text(
+                        isVisitorTyping
+                            ? '正在输入...'
+                            : isActive
+                                ? '在线'
+                                : '离线',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: isVisitorTyping
+                              ? AppTheme.infoColor
+                              : colorScheme.onSurfaceVariant,
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                          child: CopilotPresence(
+                              conversationId: widget.conversationId)),
+                    ]),
                   ],
                 ),
               ),
@@ -345,6 +526,22 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             icon: const Icon(Icons.more_vert),
             onSelected: (value) {
               switch (value) {
+                case 'customer':
+                  Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => CustomerDetailPage(
+                              conversationId: widget.conversationId)));
+                  break;
+                case 'summary':
+                  ref.read(copilotProvider(widget.conversationId).notifier).ask(
+                      summaryPrompt,
+                      sourceMessageId: _latestMessageId(messages),
+                      purpose: 'summary');
+                  break;
+                case 'intake':
+                  _intakeLink();
+                  break;
                 case 'transfer':
                   _showTransferDialog();
                   break;
@@ -354,6 +551,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               }
             },
             itemBuilder: (context) => [
+              const PopupMenuItem(value: 'customer', child: Text('客户资料')),
+              const PopupMenuItem(value: 'summary', child: Text('汇总资料')),
+              const PopupMenuItem(value: 'intake', child: Text('填写资料链接')),
               const PopupMenuItem(
                 value: 'transfer',
                 child: ListTile(
@@ -376,49 +576,89 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       ),
       body: Column(
         children: [
+          if (copilot.error != null)
+            Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(children: [
+                  Expanded(
+                      child: Text(copilot.error!,
+                          style: TextStyle(
+                              fontSize: 12, color: colorScheme.error))),
+                  TextButton(
+                      onPressed: () => ref
+                          .read(copilotProvider(widget.conversationId).notifier)
+                          .refresh(),
+                      child: const Text('重试')),
+                ])),
           Expanded(
-            child: messages.isEmpty && !appState.connected
-                ? const Center(child: LoadingIndicator())
-                : GestureDetector(
-                    onTap: () => FocusScope.of(context).unfocus(),
-                    child: ListView.builder(
+              child: GestureDetector(
+                  onTap: () => FocusScope.of(context).unfocus(),
+                  child: ListView.builder(
                       controller: _scrollController,
-                      reverse: false,
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(12),
                       itemCount: messages.length,
                       itemBuilder: (context, index) {
                         final message = messages[index];
-                        final showAvatar = index == 0 ||
-                            messages[index - 1].senderUserId !=
-                                message.senderUserId ||
-                            messages[index - 1].senderType !=
-                                message.senderType;
-                        final isTranslating =
-                            appState.translatingMessageIds.contains(message.id);
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: MessageBubble(
-                            message: message,
-                            showAvatar: showAvatar,
-                            conversation: conversation,
-                            isTranslating: isTranslating,
-                            onReply: () {
-                              setState(() {
-                                _replyingTo = message.id;
-                                _focusNode.requestFocus();
-                              });
-                            },
-                            onTranslate: () {
-                              ref
-                                  .read(agentAppProvider.notifier)
-                                  .translateMessage(message.id, message.body);
-                            },
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-          ),
+                        final runs = copilot.snapshot?.runs
+                                .where((r) => r.sourceMessageId == message.id)
+                                .toList() ??
+                            <CopilotRun>[];
+                        final next = index + 1 < messages.length
+                            ? messages[index + 1]
+                            : null;
+                        final anchor = runs.isNotEmpty ||
+                            message.senderType == MessageSenderType.visitor &&
+                                next?.senderType != MessageSenderType.visitor;
+                        return Column(
+                            key: ValueKey(message.id),
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              MessageBubble(
+                                  message: message,
+                                  showAvatar: index == 0 ||
+                                      messages[index - 1].senderUserId !=
+                                          message.senderUserId ||
+                                      messages[index - 1].senderType !=
+                                          message.senderType,
+                                  conversation: conversation,
+                                  isTranslating: appState.translatingMessageIds
+                                      .contains(message.id),
+                                  onReply: () => setState(() {
+                                        _replyingTo = message.id;
+                                        _focusNode.requestFocus();
+                                      }),
+                                  onTranslate: () async {
+                                    try {
+                                      await ref
+                                          .read(agentRepositoryProvider)
+                                          .translateMessage(
+                                              widget.conversationId,
+                                              message.id);
+                                      if (mounted) {
+                                        ref
+                                            .read(copilotProvider(
+                                                    widget.conversationId)
+                                                .notifier)
+                                            .refresh();
+                                      }
+                                    } catch (error) {
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(SnackBar(
+                                                content:
+                                                    Text(error.toString())));
+                                      }
+                                    }
+                                  }),
+                              MessageAssistance(message: message),
+                              if (anchor)
+                                CopilotPanel(
+                                    key: ValueKey('assistant-${message.id}'),
+                                    conversationId: widget.conversationId,
+                                    sourceMessageId: message.id,
+                                    onChoose: _adoptReply),
+                            ]);
+                      }))),
           if (_replyingTo != null) _buildReplyPreview(messages),
           if (!canSend)
             Container(
@@ -517,115 +757,115 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   Widget _buildInputArea(bool canSend) {
     final colorScheme = Theme.of(context).colorScheme;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      decoration: BoxDecoration(
-        color: colorScheme.surface,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 10,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        child: Row(
-          children: [
-            IconButton(
-              icon: Icon(
-                _showEmojiPicker
-                    ? Icons.keyboard
-                    : Icons.emoji_emotions_outlined,
-                color: colorScheme.onSurfaceVariant,
-              ),
-              onPressed: () {
-                setState(() {
-                  _showEmojiPicker = !_showEmojiPicker;
-                  if (_showEmojiPicker) {
-                    FocusScope.of(context).unfocus();
-                  } else {
-                    _focusNode.requestFocus();
-                  }
-                });
-              },
-            ),
-            IconButton(
-              icon: Icon(
-                Icons.image_outlined,
-                color: colorScheme.onSurfaceVariant,
-              ),
-              onPressed: _pickImage,
-            ),
-            IconButton(
-              icon: Icon(
-                Icons.quickreply_outlined,
-                color: colorScheme.onSurfaceVariant,
-              ),
-              onPressed: _showQuickReplies,
-            ),
-            Expanded(
-              child: TextField(
-                controller: _messageController,
-                focusNode: _focusNode,
-                maxLines: 4,
-                minLines: 1,
-                textInputAction: TextInputAction.newline,
-                enabled: canSend,
-                decoration: InputDecoration(
-                  hintText: canSend ? '输入消息...' : '无法发送消息',
-                  filled: true,
-                  fillColor: colorScheme.surfaceContainerHighest,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide.none,
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide.none,
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide(
-                      color: colorScheme.primary,
-                      width: 1.5,
-                    ),
-                  ),
-                  disabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-                onSubmitted: canSend ? (_) => _sendMessage() : null,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              decoration: BoxDecoration(
-                color: canSend ? colorScheme.primary : colorScheme.outline,
-                shape: BoxShape.circle,
-              ),
-              child: IconButton(
-                icon: _isSending
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Icon(Icons.send, color: Colors.white),
-                onPressed: (canSend && !_isSending) ? _sendMessage : null,
-              ),
-            ),
-          ],
+    final askingAgent = isCopilotMention(_messageController.text);
+    final canSubmit = (canSend || askingAgent) &&
+        !_isSending &&
+        (askingAgent
+            ? copilotQuestion(_messageController.text).isNotEmpty
+            : _messageController.text.trim().isNotEmpty);
+    return SafeArea(
+      top: false,
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(10, 5, 10, 8),
+        padding: const EdgeInsets.fromLTRB(10, 4, 4, 4),
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          border: Border.all(color: colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(8),
         ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          if (_mentionMenu)
+            Wrap(spacing: 8, children: [
+              ActionChip(
+                  label: const Text('翻译'),
+                  onPressed: () => _insertAgent('请把客户最新消息翻译成中文')),
+              ActionChip(
+                  label: const Text('回复建议'),
+                  onPressed: () => _insertAgent(replyPrompt)),
+              ActionChip(
+                  label: const Text('分析'),
+                  onPressed: () => _insertAgent('简洁分析客户诉求，给我下一步建议，不重复对话内容')),
+            ]),
+          TextField(
+            controller: _messageController,
+            focusNode: _focusNode,
+            maxLines: 4,
+            minLines: 2,
+            style: const TextStyle(fontSize: 14, height: 1.5),
+            textInputAction: TextInputAction.newline,
+            decoration: InputDecoration(
+              hintText: canSend ? '输入消息或 @agent 求助' : '可输入 @agent 内部求助',
+              isDense: true,
+              filled: false,
+              contentPadding:
+                  const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+            ),
+            onSubmitted: canSubmit ? (_) => _sendMessage() : null,
+          ),
+          Row(children: [
+            IconButton(
+                tooltip: '@agent',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.alternate_email, size: 20),
+                onPressed: () => _insertAgent()),
+            Expanded(
+                child: askingAgent
+                    ? Text('@agent · 仅客服可见',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style:
+                            TextStyle(fontSize: 10, color: colorScheme.primary))
+                    : const SizedBox()),
+            IconButton(
+              tooltip: '图片',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.image_outlined, size: 20),
+              onPressed:
+                  canSend && !askingAgent && !_isSending ? _pickImage : null,
+            ),
+            IconButton(
+              tooltip: '表情',
+              visualDensity: VisualDensity.compact,
+              icon: Icon(
+                  _showEmojiPicker
+                      ? Icons.keyboard
+                      : Icons.emoji_emotions_outlined,
+                  size: 20),
+              onPressed: () => setState(() {
+                _showEmojiPicker = !_showEmojiPicker;
+                if (_showEmojiPicker) {
+                  FocusScope.of(context).unfocus();
+                } else {
+                  _focusNode.requestFocus();
+                }
+              }),
+            ),
+            IconButton(
+              tooltip: '常用语',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.quickreply_outlined, size: 20),
+              onPressed: canSend && !askingAgent ? _showQuickReplies : null,
+            ),
+            const SizedBox(width: 4),
+            IconButton.filled(
+              tooltip: askingAgent ? '向内部助手提问' : '发送给客户',
+              style: IconButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(6))),
+              icon: _isSending
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.send, size: 19),
+              onPressed: canSubmit ? _sendMessage : null,
+            ),
+          ]),
+        ]),
       ),
     );
   }

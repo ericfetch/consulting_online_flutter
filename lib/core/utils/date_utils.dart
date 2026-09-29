@@ -10,7 +10,7 @@ class AppDateUtils {
 
   static String formatDateTime(DateTime? dateTime) {
     if (dateTime == null) return '';
-    return DateFormat('yyyy-MM-dd HH:mm').format(dateTime.toLocal());
+    return DateFormat('yyyy-MM-dd HH:mm:ss').format(dateTime.toLocal());
   }
 
   static String formatDate(DateTime? dateTime) {

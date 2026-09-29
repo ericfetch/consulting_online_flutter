@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../customers/customer_status_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
@@ -226,6 +227,7 @@ class _ConversationTile extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isSelected = appState.selectedId == conversation.id;
+    final recordStatus = ref.watch(customerStatusesProvider)[conversation.id];
     final colorScheme = Theme.of(context).colorScheme;
     final presenceInfo = appState.presence[conversation.id];
     final presenceState = effectivePresenceState(
@@ -313,7 +315,7 @@ class _ConversationTile extends ConsumerWidget {
                         child: isVisitorTyping
                             ? Text(
                                 '正在输入：$draft',
-                                style: TextStyle(
+                                style: const TextStyle(
                                   fontSize: 13,
                                   color: AppTheme.infoColor,
                                   fontStyle: FontStyle.italic,
@@ -361,6 +363,20 @@ class _ConversationTile extends ConsumerWidget {
                   Row(
                     children: [
                       _buildStatusBadge(context, bucket),
+                      if (recordStatus is Map &&
+                          recordStatus['submitted'] == true)
+                        Padding(
+                            padding: const EdgeInsets.only(left: 8),
+                            child: Text('已提交',
+                                style: TextStyle(
+                                    fontSize: 11, color: colorScheme.primary))),
+                      if (recordStatus is Map &&
+                          recordStatus['summarized'] == true)
+                        Padding(
+                            padding: const EdgeInsets.only(left: 8),
+                            child: Text('已汇总',
+                                style: TextStyle(
+                                    fontSize: 11, color: colorScheme.primary))),
                       if (conversation.siteName.isNotEmpty) ...[
                         const SizedBox(width: 8),
                         Icon(

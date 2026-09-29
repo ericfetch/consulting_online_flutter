@@ -6,6 +6,7 @@ class DashboardTrendPoint {
   final int messages;
   final int visitors;
   final int conversions;
+  final int consultations;
 
   const DashboardTrendPoint({
     required this.date,
@@ -13,6 +14,7 @@ class DashboardTrendPoint {
     this.messages = 0,
     this.visitors = 0,
     this.conversions = 0,
+    this.consultations = 0,
   });
 
   factory DashboardTrendPoint.fromJson(Map<String, dynamic> json) {
@@ -22,6 +24,7 @@ class DashboardTrendPoint {
       messages: json['messages'] as int? ?? 0,
       visitors: json['visitors'] as int? ?? 0,
       conversions: json['conversions'] as int? ?? 0,
+      consultations: json['consultations'] as int? ?? 0,
     );
   }
 }
@@ -36,6 +39,13 @@ class DashboardStats {
   final int conversionsToday;
   final double conversionRate;
   final List<DashboardTrendPoint> trend;
+  final int activeConversationsToday,
+      summarizedCustomers,
+      summarizedCustomersToday,
+      webConsultingNow,
+      whatsappConsultingNow;
+  final DateTime? generatedAt;
+  final List<AdminUser> agentRoster;
 
   const DashboardStats({
     this.agents = 0,
@@ -47,6 +57,13 @@ class DashboardStats {
     this.conversionsToday = 0,
     this.conversionRate = 0,
     this.trend = const [],
+    this.activeConversationsToday = 0,
+    this.summarizedCustomers = 0,
+    this.summarizedCustomersToday = 0,
+    this.webConsultingNow = 0,
+    this.whatsappConsultingNow = 0,
+    this.generatedAt,
+    this.agentRoster = const [],
   });
 
   factory DashboardStats.fromJson(Map<String, dynamic> json) {
@@ -63,6 +80,15 @@ class DashboardStats {
       conversionsToday: json['conversionsToday'] as int? ?? 0,
       conversionRate: (json['conversionRate'] as num?)?.toDouble() ?? 0,
       trend: trend,
+      activeConversationsToday: json['activeConversationsToday'] as int? ?? 0,
+      summarizedCustomers: json['summarizedCustomers'] as int? ?? 0,
+      summarizedCustomersToday: json['summarizedCustomersToday'] as int? ?? 0,
+      webConsultingNow: json['webConsultingNow'] as int? ?? 0,
+      whatsappConsultingNow: json['whatsappConsultingNow'] as int? ?? 0,
+      generatedAt: DateTime.tryParse(json['generatedAt'] as String? ?? ''),
+      agentRoster: (json['agentRoster'] as List? ?? [])
+          .map((e) => AdminUser.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
     );
   }
 }

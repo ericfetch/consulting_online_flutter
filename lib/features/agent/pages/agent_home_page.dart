@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../customers/customer_pages.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../auth/providers/auth_providers.dart';
@@ -59,6 +60,11 @@ class _AgentHomePageState extends ConsumerState<AgentHomePage> {
       appBar: AppBar(
         title: Text(_currentIndex == 0 ? '客服工作台' : '设置'),
         actions: [
+          IconButton(
+              tooltip: '客户资料',
+              icon: const Icon(Icons.folder_shared_outlined),
+              onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const CustomerListPage()))),
           if (_currentIndex == 0) _buildStatusSelector(currentStatus),
           IconButton(
             icon: Icon(

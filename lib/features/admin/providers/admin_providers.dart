@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../auth/providers/auth_providers.dart';
 import '../../../data/models/conversation.dart';
 import '../../../data/models/group.dart';
 import '../../../data/models/site.dart';
@@ -30,11 +31,15 @@ class DashboardNotifier extends StateNotifier<DashboardState> {
   DashboardNotifier(this._repo) : super(const DashboardState());
 
   Future<void> loadStats() async {
+    if (!mounted || state.isLoading) return;
     state = state.copyWith(isLoading: true, error: null);
     try {
-      final stats = await _repo.getDashboard();
+      final stats =
+          await _repo.getDashboard().timeout(const Duration(seconds: 10));
+      if (!mounted) return;
       state = state.copyWith(stats: stats, isLoading: false);
     } catch (e) {
+      if (!mounted) return;
       state = state.copyWith(
         isLoading: false,
         error: e.toString().replaceFirst('Exception: ', ''),
@@ -48,7 +53,8 @@ class AdminUsersState {
   final bool isLoading;
   final String? error;
 
-  const AdminUsersState({this.users = const [], this.isLoading = false, this.error});
+  const AdminUsersState(
+      {this.users = const [], this.isLoading = false, this.error});
 
   AdminUsersState copyWith({
     List<AdminUser>? users,
@@ -97,7 +103,8 @@ class AdminGroupsState {
   final bool isLoading;
   final String? error;
 
-  const AdminGroupsState({this.groups = const [], this.isLoading = false, this.error});
+  const AdminGroupsState(
+      {this.groups = const [], this.isLoading = false, this.error});
 
   AdminGroupsState copyWith({
     List<AgentGroup>? groups,
@@ -170,7 +177,8 @@ class AdminSitesState {
   final bool isLoading;
   final String? error;
 
-  const AdminSitesState({this.sites = const [], this.isLoading = false, this.error});
+  const AdminSitesState(
+      {this.sites = const [], this.isLoading = false, this.error});
 
   AdminSitesState copyWith({
     List<Site>? sites,
@@ -299,6 +307,7 @@ class AdminConversationsNotifier
 
 final dashboardProvider =
     StateNotifierProvider<DashboardNotifier, DashboardState>((ref) {
+  ref.watch(authProvider.select((s) => s.user?.id));
   final repo = ref.watch(adminRepositoryProvider);
   return DashboardNotifier(repo);
 });

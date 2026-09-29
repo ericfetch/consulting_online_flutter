@@ -38,7 +38,6 @@ class WsClient {
   WsConnectionStatus _status = WsConnectionStatus.disconnected;
   Timer? _heartbeatTimer;
   Timer? _reconnectTimer;
-  int _reconnectAttempts = 0;
   String? _sessionCookie;
 
   /// 标记「主动断开」（退出登录 / 鉴权失败）：
@@ -82,7 +81,6 @@ class WsClient {
 
   void _onOpen() {
     _updateStatus(WsConnectionStatus.connected);
-    _reconnectAttempts = 0;
     _startHeartbeat();
     send('agent:init', {});
   }
@@ -93,7 +91,8 @@ class WsClient {
       final event = RealtimeEvent.fromJson(json);
 
       if (event.type == 'message:new') {
-        debugPrint('[ws] recv message:new at ${DateTime.now().toIso8601String()}');
+        debugPrint(
+            '[ws] recv message:new at ${DateTime.now().toIso8601String()}');
       }
 
       if (event.type == 'auth:failed') {
@@ -144,10 +143,9 @@ class WsClient {
     if (_reconnectTimer?.isActive ?? false) return;
 
     _updateStatus(WsConnectionStatus.reconnecting);
-    _reconnectAttempts++;
 
-    final delay = AppConstants.wsReconnectDelay;
-    _reconnectTimer = Timer(Duration(milliseconds: delay), () {
+    const delay = AppConstants.wsReconnectDelay;
+    _reconnectTimer = Timer(const Duration(milliseconds: delay), () {
       connect();
     });
   }
@@ -195,7 +193,8 @@ class WsClient {
   }
 
   bool updateConversation(String conversationId, Map<String, dynamic> updates) {
-    return send('conversation:update', {'conversationId': conversationId, ...updates});
+    return send(
+        'conversation:update', {'conversationId': conversationId, ...updates});
   }
 
   void disconnect() {
@@ -205,7 +204,6 @@ class WsClient {
     _channel?.sink.close();
     _channel = null;
     _updateStatus(WsConnectionStatus.disconnected);
-    _reconnectAttempts = 0;
   }
 
   void dispose() {

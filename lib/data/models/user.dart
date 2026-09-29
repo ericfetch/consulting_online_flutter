@@ -14,6 +14,7 @@ class AgentUser {
   final String? themeMode;
   final List<String> ledGroupIds;
   final List<VisibleSite> visibleSites;
+  final DateTime? updatedAt;
 
   const AgentUser({
     required this.id,
@@ -27,6 +28,7 @@ class AgentUser {
     this.themeMode,
     this.ledGroupIds = const [],
     this.visibleSites = const [],
+    this.updatedAt,
   });
 
   bool get isAdmin => role == UserRole.admin;
@@ -42,10 +44,10 @@ class AgentUser {
       autoTranslate: json['autoTranslate'] as bool? ?? false,
       agentStatus: _parseAgentStatus(json['agentStatus']),
       themeMode: json['themeMode'] as String?,
+      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? ''),
       ledGroupIds:
           (json['ledGroupIds'] as List<dynamic>?)?.cast<String>() ?? const [],
-      visibleSites:
-          (json['visibleSites'] as List<dynamic>?)
+      visibleSites: (json['visibleSites'] as List<dynamic>?)
               ?.map((e) => VisibleSite.fromJson(e as Map<String, dynamic>))
               .toList() ??
           const [],
@@ -63,6 +65,7 @@ class AgentUser {
       'autoTranslate': autoTranslate,
       'agentStatus': _agentStatusToJson(agentStatus),
       'themeMode': themeMode,
+      'updatedAt': updatedAt?.toIso8601String(),
       'ledGroupIds': ledGroupIds,
       'visibleSites': visibleSites.map((e) => e.toJson()).toList(),
     };
@@ -80,6 +83,7 @@ class AgentUser {
     String? themeMode,
     List<String>? ledGroupIds,
     List<VisibleSite>? visibleSites,
+    DateTime? updatedAt,
   }) {
     return AgentUser(
       id: id ?? this.id,
@@ -93,6 +97,7 @@ class AgentUser {
       themeMode: themeMode ?? this.themeMode,
       ledGroupIds: ledGroupIds ?? this.ledGroupIds,
       visibleSites: visibleSites ?? this.visibleSites,
+      updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 
@@ -154,6 +159,11 @@ class VisibleSite {
   }
 
   Map<String, dynamic> toJson() {
-    return {'id': id, 'name': name, 'companyName': companyName, 'domain': domain};
+    return {
+      'id': id,
+      'name': name,
+      'companyName': companyName,
+      'domain': domain
+    };
   }
 }

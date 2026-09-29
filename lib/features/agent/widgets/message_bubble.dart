@@ -1,5 +1,6 @@
-import 'package:cached_network_image/cached_network_image.dart';
+import 'message_attachment.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../../core/utils/date_utils.dart';
 import '../../../data/models/conversation.dart';
 import '../../../data/models/message.dart';
@@ -24,7 +25,7 @@ class MessageBubble extends StatelessWidget {
     this.onTranslate,
   });
 
-  bool get _isMe => message.isFromAgent;
+  bool get _isMe => message.isFromAgent || message.isFromAi;
   bool get _isSystem => message.isSystem;
 
   @override
@@ -104,15 +105,19 @@ class MessageBubble extends StatelessWidget {
                                   height: 12,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 1.5,
-                                    color: _isMe ? Colors.white70 : colorScheme.onSurfaceVariant,
+                                    color: _isMe
+                                        ? Colors.white70
+                                        : colorScheme.onSurfaceVariant,
                                   ),
                                 ),
                                 const SizedBox(width: 6),
                                 Text(
-                                  '翻译中...',
+                                  'Think · 翻译中…',
                                   style: TextStyle(
                                     fontSize: 11,
-                                    color: _isMe ? Colors.white70 : colorScheme.onSurfaceVariant,
+                                    color: _isMe
+                                        ? Colors.white70
+                                        : colorScheme.onSurfaceVariant,
                                   ),
                                 ),
                               ],
@@ -126,6 +131,15 @@ class MessageBubble extends StatelessWidget {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        Text(
+                          AppDateUtils.formatDateTime(message.createdAt),
+                          style: TextStyle(
+                              fontSize: 10,
+                              color: colorScheme.onSurfaceVariant),
+                        ),
+                        _copyButton(context),
+                        if (message.isPending || message.isFailed)
+                          const SizedBox(width: 6),
                         if (message.isPending)
                           SizedBox(
                             width: 12,
@@ -154,14 +168,6 @@ class MessageBubble extends StatelessWidget {
                                   ),
                                 ),
                               ],
-                            ),
-                          )
-                        else
-                          Text(
-                            AppDateUtils.formatTime(message.createdAt),
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: colorScheme.onSurfaceVariant,
                             ),
                           ),
                       ],
@@ -240,77 +246,60 @@ class MessageBubble extends StatelessWidget {
   }
 
   Widget _buildMessageContent(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    if (message.isImage && message.imageUrls.isNotEmpty) {
-      return _buildImages(context);
-    }
-
-    final textColor = _isMe ? Colors.white : colorScheme.onSurface;
-
-    return Text(
-      message.body,
-      style: TextStyle(
-        color: textColor,
-        fontSize: 15,
-        height: 1.4,
-      ),
-    );
-  }
-
-  Widget _buildImages(BuildContext context) {
-    final urls = message.imageUrls;
-    if (urls.length == 1) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: CachedNetworkImage(
-          imageUrl: urls.first,
-          width: 200,
-          fit: BoxFit.cover,
-          placeholder: (_, __) => Container(
-            width: 200,
-            height: 200,
-            color: Colors.black12,
-            child: const Center(child: LoadingIndicator(size: 24)),
-          ),
-          errorWidget: (_, __, ___) => Container(
-            width: 200,
-            height: 200,
-            color: Colors.black12,
-            child: const Icon(Icons.broken_image, size: 48, color: Colors.grey),
-          ),
-        ),
-      );
-    }
-
-    return Wrap(
-      spacing: 4,
-      runSpacing: 4,
-      children: urls.map((url) {
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: CachedNetworkImage(
-            imageUrl: url,
-            width: 100,
-            height: 100,
-            fit: BoxFit.cover,
-            placeholder: (_, __) => Container(
-              width: 100,
-              height: 100,
-              color: Colors.black12,
-              child: const Center(child: LoadingIndicator(size: 20)),
-            ),
-            errorWidget: (_, __, ___) => Container(
-              width: 100,
-              height: 100,
-              color: Colors.black12,
-              child:
-                  const Icon(Icons.broken_image, size: 32, color: Colors.grey),
-            ),
-          ),
-        );
-      }).toList(),
-    );
+    final meta = message.metadata;
+    final attachments = meta?.attachments ?? const <MessageAttachment>[];
+    final textColor =
+        _isMe ? Colors.white : Theme.of(context).colorScheme.onSurface;
+    final bodyIsAttachment = attachments.any((a) =>
+        a.url == message.body ||
+        attachmentUrl(a.url) == attachmentUrl(message.body) &&
+            attachmentUrl(message.body).isNotEmpty);
+    return DefaultTextStyle.merge(
+        style: TextStyle(color: textColor, fontSize: 15, height: 1.4),
+        child: IconTheme.merge(
+            data: IconThemeData(color: textColor),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (meta?.whatsappForwarded == true)
+                  const Text('已转发', style: TextStyle(fontSize: 11)),
+                if (meta?.whatsappQuotedMessage != null)
+                  Container(
+                      margin: const EdgeInsets.only(bottom: 6),
+                      padding: const EdgeInsets.only(left: 8),
+                      decoration: BoxDecoration(
+                          border: Border(
+                              left: BorderSide(
+                                  color: textColor.withValues(alpha: .4),
+                                  width: 2))),
+                      child: Text(meta!.whatsappQuotedMessage!,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12))),
+                for (final attachment in attachments)
+                  Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: MessageAttachmentView(
+                          key: ValueKey(attachment.url),
+                          attachment: attachment)),
+                if (!bodyIsAttachment && message.body.isNotEmpty)
+                  Text(message.body),
+                if (meta?.whatsappMedia?.pending == true)
+                  const Padding(
+                      padding: EdgeInsets.only(top: 4),
+                      child: Text('附件接收中…', style: TextStyle(fontSize: 12))),
+                if (meta?.whatsappMedia?.error != null)
+                  Text('附件接收失败：${meta!.whatsappMedia!.error}',
+                      style: const TextStyle(fontSize: 12)),
+                if (meta?.whatsappLocationUrl
+                        ?.startsWith('https://www.google.com/maps/') ==
+                    true)
+                  TextButton(
+                      onPressed: () =>
+                          openMessageUrl(context, meta!.whatsappLocationUrl!),
+                      child: const Text('在地图中查看')),
+              ],
+            )));
   }
 
   Widget _buildTranslation(BuildContext context) {
@@ -368,69 +357,106 @@ class MessageBubble extends StatelessWidget {
   Widget _buildSystemMessage(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      child: Center(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text(
-            message.displayContent,
-            style: TextStyle(
-              fontSize: 12,
-              color: colorScheme.onSurfaceVariant,
+    return GestureDetector(
+      onLongPress: () => _showContextMenu(context),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(12),
             ),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text(message.displayContent,
+                  style: TextStyle(
+                      fontSize: 12, color: colorScheme.onSurfaceVariant)),
+              const SizedBox(height: 4),
+              Text(AppDateUtils.formatDateTime(message.createdAt),
+                  style: TextStyle(
+                      fontSize: 10, color: colorScheme.onSurfaceVariant)),
+              _copyButton(context),
+            ]),
           ),
         ),
       ),
     );
   }
 
-  void _showContextMenu(BuildContext context) {
-    final RenderObject? overlay =
-        Overlay.of(context).context.findRenderObject();
-    final RenderObject? renderObject = context.findRenderObject();
+  Widget _copyButton(BuildContext context) => IconButton(
+      tooltip: '一键复制',
+      icon: const Icon(Icons.copy_outlined, size: 14),
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+      padding: const EdgeInsets.all(4),
+      onPressed: () async {
+        await Clipboard.setData(ClipboardData(
+            text: message.body.isNotEmpty
+                ? message.body
+                : message.imageUrls.join('\n')));
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('已复制'), duration: Duration(seconds: 1)));
+        }
+      });
 
-    if (renderObject is RenderBox && overlay is RenderBox) {
-      final position =
-          renderObject.localToGlobal(Offset.zero, ancestor: overlay);
-      final size = renderObject.size;
-
-      showMenu(
-        context: context,
-        position: RelativeRect.fromLTRB(
-          position.dx,
-          position.dy + size.height,
-          position.dx + size.width,
-          position.dy,
-        ),
-        items: [
-          if (onReply != null)
-            PopupMenuItem(
-              onTap: onReply,
-              child: const ListTile(
-                leading: Icon(Icons.reply),
-                title: Text('回复'),
-                contentPadding: EdgeInsets.zero,
-              ),
-            ),
-          if (onTranslate != null &&
-              message.isFromVisitor &&
-              message.translatedContent == null &&
-              !isTranslating)
-            PopupMenuItem(
-              onTap: onTranslate,
-              child: const ListTile(
-                leading: Icon(Icons.translate),
-                title: Text('翻译'),
-                contentPadding: EdgeInsets.zero,
-              ),
-            ),
-        ],
-      );
+  Future<void> _showContextMenu(BuildContext context) async {
+    final original = message.metadata?.originalText;
+    final copyText =
+        message.body.isNotEmpty ? message.body : message.imageUrls.join('\n');
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+        if (copyText.isNotEmpty)
+          ListTile(
+              leading: const Icon(Icons.copy_outlined),
+              title: const Text('复制消息'),
+              onTap: () => Navigator.pop(sheetContext, 'copy')),
+        if (message.translatedContent?.isNotEmpty == true)
+          ListTile(
+              leading: const Icon(Icons.translate),
+              title: const Text('复制译文'),
+              onTap: () => Navigator.pop(sheetContext, 'translation')),
+        if (original != null && original.isNotEmpty && original != copyText)
+          ListTile(
+              leading: const Icon(Icons.text_fields),
+              title: const Text('复制原文'),
+              onTap: () => Navigator.pop(sheetContext, 'original')),
+        if (!_isSystem && onReply != null)
+          ListTile(
+              leading: const Icon(Icons.reply),
+              title: const Text('回复'),
+              onTap: () => Navigator.pop(sheetContext, 'reply')),
+        if (onTranslate != null &&
+            message.isFromVisitor &&
+            message.translatedContent == null &&
+            !isTranslating)
+          ListTile(
+              leading: const Icon(Icons.translate),
+              title: const Text('翻译'),
+              onTap: () => Navigator.pop(sheetContext, 'translate')),
+      ])),
+    );
+    if (!context.mounted || action == null) return;
+    if (action == 'reply') {
+      onReply?.call();
+      return;
+    }
+    if (action == 'translate') {
+      onTranslate?.call();
+      return;
+    }
+    final text = action == 'translation'
+        ? message.translatedContent!
+        : action == 'original'
+            ? original!
+            : copyText;
+    await Clipboard.setData(ClipboardData(text: text));
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已复制'), duration: Duration(seconds: 1)));
     }
   }
 }

@@ -3,13 +3,79 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/network/dio_client.dart';
 import '../models/conversation.dart';
 import '../models/message.dart';
+import '../models/copilot.dart';
 import '../models/transfer_candidate.dart';
 import '../models/user.dart';
+
+class CopilotAccessException implements Exception {
+  final String message;
+  CopilotAccessException(this.message);
+  @override
+  String toString() => message;
+}
 
 class AgentRepository {
   final DioClient _dio;
 
   AgentRepository(this._dio);
+
+  Future<CopilotSnapshot> getCopilot(String conversationId,
+      {String? fromMessageId}) async {
+    final response = await _dio.get(
+        '/api/agent/conversations/$conversationId/copilot',
+        queryParameters:
+            fromMessageId == null ? null : {'fromMessageId': fromMessageId});
+    return CopilotSnapshot.fromJson(_copilotResponse(response));
+  }
+
+  Future<CopilotRun> askCopilot(
+      String conversationId, String prompt, String requestId,
+      {String? sourceMessageId, String purpose = 'assist'}) async {
+    final response = await _dio
+        .post('/api/agent/conversations/$conversationId/copilot', data: {
+      'prompt': copilotQuestion(prompt),
+      'requestId': requestId,
+      'purpose': purpose,
+      if (sourceMessageId != null) 'sourceMessageId': sourceMessageId
+    });
+    return CopilotRun.fromJson(_copilotResponse(response));
+  }
+
+  Future<void> cancelCopilot(String conversationId, String runId) async {
+    _copilotResponse(await _dio.post(
+        '/api/agent/conversations/$conversationId/copilot/$runId/cancel',
+        data: <String, dynamic>{}));
+  }
+
+  Future<void> translateMessage(String id, String messageId) async {
+    _copilotResponse(await _dio.post(
+        '/api/agent/conversations/$id/copilot/translations/$messageId',
+        data: {}));
+  }
+
+  Future<void> recognizeMessage(String id, String messageId, int index) async {
+    _copilotResponse(await _dio.post(
+        '/api/agent/conversations/$id/copilot/recognize/$messageId/$index',
+        data: {}));
+  }
+
+  Future<void> retryAttachment(String id, String messageId) async {
+    _copilotResponse(await _dio.post(
+        '/api/agent/conversations/$id/messages/$messageId/retry-attachment',
+        data: {}));
+  }
+
+  Map<String, dynamic> _copilotResponse(Response response) {
+    final data = response.data;
+    if ([401, 403, 404].contains(response.statusCode)) {
+      throw CopilotAccessException(
+          data is Map ? data['error']?.toString() ?? '无权访问' : '无权访问');
+    }
+    if ((response.statusCode ?? 500) >= 400 || data is! Map) {
+      throw Exception(data is Map ? data['error'] ?? '助手请求失败' : '助手请求失败');
+    }
+    return Map<String, dynamic>.from(data);
+  }
 
   Future<AgentUser> getSettings() async {
     try {

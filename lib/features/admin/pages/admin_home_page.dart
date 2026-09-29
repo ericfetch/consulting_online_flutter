@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../customers/customer_pages.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../auth/providers/auth_providers.dart';
@@ -20,13 +21,13 @@ class AdminHomePage extends ConsumerStatefulWidget {
 class _AdminHomePageState extends ConsumerState<AdminHomePage> {
   int _currentIndex = 0;
 
-  final _pages = const [
-    DashboardPage(),
-    AdminConversationsPage(),
-    UsersPage(),
-    GroupsPage(),
-    SitesPage(),
-  ];
+  List<Widget> get _pages => [
+        DashboardPage(visible: _currentIndex == 0),
+        const AdminConversationsPage(),
+        const UsersPage(),
+        const GroupsPage(),
+        const SitesPage(),
+      ];
 
   @override
   void initState() {
@@ -44,6 +45,11 @@ class _AdminHomePageState extends ConsumerState<AdminHomePage> {
       appBar: AppBar(
         title: const Text('管理后台'),
         actions: [
+          IconButton(
+              tooltip: '客户资料',
+              icon: const Icon(Icons.folder_shared_outlined),
+              onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const CustomerListPage()))),
           IconButton(
             icon: Icon(
               Theme.of(context).brightness == Brightness.dark

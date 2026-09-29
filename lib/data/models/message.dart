@@ -1,4 +1,4 @@
-enum MessageSenderType { visitor, agent, system }
+enum MessageSenderType { visitor, agent, ai, system }
 
 enum DeliveryStatus { pending, accepted, sent, delivered, read, failed }
 
@@ -6,15 +6,23 @@ class MessageAttachment {
   final String type;
   final String url;
   final String? mimeType;
+  final String? filename;
+  final int? size;
 
   const MessageAttachment(
-      {required this.type, required this.url, this.mimeType});
+      {required this.type,
+      required this.url,
+      this.mimeType,
+      this.filename,
+      this.size});
 
   factory MessageAttachment.fromJson(Map<String, dynamic> json) {
     return MessageAttachment(
       type: json['type'] as String? ?? 'image',
       url: json['url'] as String? ?? '',
       mimeType: json['mimeType'] as String?,
+      filename: json['filename'] as String?,
+      size: (json['size'] as num?)?.toInt(),
     );
   }
 
@@ -23,6 +31,8 @@ class MessageAttachment {
       'type': type,
       'url': url,
       if (mimeType != null) 'mimeType': mimeType,
+      if (filename != null) 'filename': filename,
+      if (size != null) 'size': size,
     };
   }
 }
@@ -118,6 +128,9 @@ class MessageWhatsappMedia {
 }
 
 class MessageMetadata {
+  final String? whatsappLocationUrl;
+  final String? whatsappQuotedMessage;
+  final bool whatsappForwarded;
   final String? kind;
   final List<MessageAttachment> attachments;
   final Map<String, dynamic>? formData;
@@ -130,6 +143,9 @@ class MessageMetadata {
   final MessageWhatsappMedia? whatsappMedia;
 
   const MessageMetadata({
+    this.whatsappLocationUrl,
+    this.whatsappQuotedMessage,
+    this.whatsappForwarded = false,
     this.kind,
     this.attachments = const [],
     this.formData,
@@ -145,6 +161,9 @@ class MessageMetadata {
   factory MessageMetadata.fromJson(Map<String, dynamic>? json) {
     if (json == null) return const MessageMetadata();
     return MessageMetadata(
+      whatsappLocationUrl: json['whatsappLocationUrl'] as String?,
+      whatsappQuotedMessage: json['whatsappQuotedMessage'] as String?,
+      whatsappForwarded: json['whatsappForwarded'] == true,
       kind: json['kind'] as String?,
       attachments: (json['attachments'] as List<dynamic>?)
               ?.map(
@@ -220,6 +239,7 @@ class ChatMessage {
   bool get isSystem => senderType == MessageSenderType.system;
   bool get isFromVisitor => senderType == MessageSenderType.visitor;
   bool get isFromAgent => senderType == MessageSenderType.agent;
+  bool get isFromAi => senderType == MessageSenderType.ai;
   bool get isImage =>
       metadata?.attachments.any((a) => a.type == 'image') ?? false;
   bool get isVideo =>
@@ -235,10 +255,17 @@ class ChatMessage {
           .toList() ??
       const [];
   String get senderName =>
-      senderUserName ?? (isMe ? '我' : (isSystem ? '系统' : '访客'));
+      senderUserName ??
+      (isFromAi ? '智能客服' : (isMe ? '我' : (isSystem ? '系统' : '访客')));
   String? get translatedContent =>
       metadata?.agentTranslation?.translatedText ?? metadata?.translation?.text;
   String get displayContent {
+    if (metadata?.attachments.any((a) => a.type == 'audio') == true) {
+      return '[语音/音频]';
+    }
+    if (metadata?.attachments.any((a) => a.type == 'document') == true) {
+      return '[文件]';
+    }
     if (isImage && imageUrls.isNotEmpty) return '[图片]';
     if (isVideo) return '[视频]';
     if (isSticker) return '[贴纸]';
@@ -288,6 +315,11 @@ class ChatMessage {
 
   Map<String, dynamic> _metadataToJson(MessageMetadata meta) {
     return {
+      if (meta.whatsappLocationUrl != null)
+        'whatsappLocationUrl': meta.whatsappLocationUrl,
+      if (meta.whatsappQuotedMessage != null)
+        'whatsappQuotedMessage': meta.whatsappQuotedMessage,
+      if (meta.whatsappForwarded) 'whatsappForwarded': true,
       if (meta.kind != null) 'kind': meta.kind,
       if (meta.attachments.isNotEmpty)
         'attachments': meta.attachments.map((a) => a.toJson()).toList(),
@@ -373,6 +405,8 @@ class ChatMessage {
         return MessageSenderType.visitor;
       case 'AGENT':
         return MessageSenderType.agent;
+      case 'AI':
+        return MessageSenderType.ai;
       case 'SYSTEM':
       default:
         return MessageSenderType.system;
@@ -385,6 +419,8 @@ class ChatMessage {
         return 'VISITOR';
       case MessageSenderType.agent:
         return 'AGENT';
+      case MessageSenderType.ai:
+        return 'AI';
       case MessageSenderType.system:
         return 'SYSTEM';
     }

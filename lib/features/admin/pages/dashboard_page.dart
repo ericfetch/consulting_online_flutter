@@ -1,15 +1,58 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../../core/utils/date_utils.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../data/models/group.dart';
 import '../../../shared/widgets/widgets.dart';
 import '../providers/admin_providers.dart';
 
-class DashboardPage extends ConsumerWidget {
-  const DashboardPage({super.key});
+class DashboardPage extends ConsumerStatefulWidget {
+  final bool visible;
+  const DashboardPage({super.key, this.visible = true});
+  @override
+  ConsumerState<DashboardPage> createState() => _DashboardPageState();
+}
+
+class _DashboardPageState extends ConsumerState<DashboardPage>
+    with WidgetsBindingObserver {
+  Timer? _timer;
+  bool _resumed = true;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _timer = Timer.periodic(const Duration(seconds: 5), (_) => _refresh());
+    Future.microtask(_refresh);
+  }
+
+  void _refresh() {
+    if (mounted && widget.visible && _resumed) {
+      ref.read(dashboardProvider.notifier).loadStats();
+    }
+  }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  void didUpdateWidget(DashboardPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.visible && widget.visible) Future.microtask(_refresh);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _resumed = state == AppLifecycleState.resumed;
+    if (_resumed) _refresh();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(dashboardProvider);
     final stats = state.stats;
     final colorScheme = Theme.of(context).colorScheme;
@@ -31,7 +74,7 @@ class DashboardPage extends ConsumerWidget {
         padding: const EdgeInsets.all(16),
         children: [
           Text(
-            '实时在线',
+            '数据概览',
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.w600,
                 ),
@@ -41,7 +84,7 @@ class DashboardPage extends ConsumerWidget {
             children: [
               Expanded(
                 child: _StatCard(
-                  title: '在线（在网站上）',
+                  title: '网站在线访客',
                   value: '${stats.onlineNow}',
                   icon: Icons.public,
                   color: colorScheme.primary,
@@ -50,7 +93,7 @@ class DashboardPage extends ConsumerWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: _StatCard(
-                  title: '咨询中（已打开 Chat）',
+                  title: '正在咨询（含 WhatsApp）',
                   value: '${stats.consultingNow}',
                   icon: Icons.chat,
                   color: AppTheme.successColor,
@@ -66,17 +109,18 @@ class DashboardPage extends ConsumerWidget {
                 ),
           ),
           const SizedBox(height: 12),
-          GridView.count(
-            crossAxisCount: 2,
+          GridView(
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                mainAxisExtent: 145,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12),
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 12,
-            crossAxisSpacing: 12,
-            childAspectRatio: 1.4,
             children: [
               _StatCard(
-                title: '今日会话',
-                value: '${stats.conversationsToday}',
+                title: '今日咨询会话',
+                value: '${stats.activeConversationsToday}',
                 icon: Icons.forum,
                 color: colorScheme.primary,
               ),
@@ -93,50 +137,57 @@ class DashboardPage extends ConsumerWidget {
                 color: AppTheme.secondaryColor,
               ),
               _StatCard(
-                title: '今日转化',
-                value: '${stats.conversionsToday}',
+                title: '已汇总客户',
+                value: '${stats.summarizedCustomers}',
                 icon: Icons.trending_up,
                 color: AppTheme.warningColor,
               ),
             ],
           ),
           const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              child: Row(
-                children: [
-                  Icon(Icons.pie_chart, color: colorScheme.primary),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Row(
-                      children: [
-                        const Text(
-                          '今日转化率',
-                          style: TextStyle(fontSize: 14),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          '${stats.conversationsToday} 会话 · ${stats.conversionsToday} 转化',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Text(
-                    '${stats.conversionRate.toStringAsFixed(2)}%',
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          Text(
+              '今日新增 ${stats.conversationsToday} 个会话 · 今日汇总 ${stats.summarizedCustomersToday} 位客户',
+              style:
+                  TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant)),
+          const SizedBox(height: 6),
+          Text(
+              '网页咨询 ${stats.webConsultingNow} · WhatsApp ${stats.whatsappConsultingNow} · 按北京时间统计',
+              style:
+                  TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant)),
+          const SizedBox(height: 6),
+          Text(
+              state.error != null
+                  ? '数据同步失败，正在重试 · 保留上次数据'
+                  : '更新于 ${AppDateUtils.formatDateTime(stats.generatedAt)} · 每 5 秒刷新',
+              style: TextStyle(
+                  fontSize: 11,
+                  color: state.error != null
+                      ? colorScheme.error
+                      : colorScheme.onSurfaceVariant)),
+          const SizedBox(height: 20),
+          Text('客服状态 · 共 ${stats.agents} 位',
+              style: const TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          for (final agent in stats.agentRoster)
+            ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: CircleAvatar(
+                    radius: 16,
+                    child: Text(
+                        agent.name.isEmpty ? '?' : agent.name.substring(0, 1))),
+                title: Text(agent.name),
+                subtitle: Text(agent.role == 'ADMIN' ? '管理员坐席' : '客服坐席'),
+                trailing: Text(
+                    agent.agentStatus == 'ONLINE'
+                        ? '上线'
+                        : agent.agentStatus == 'BUSY'
+                            ? '忙碌'
+                            : '离线',
+                    style: TextStyle(
+                        color: agent.agentStatus == 'ONLINE'
+                            ? Colors.teal
+                            : colorScheme.onSurfaceVariant))),
           const SizedBox(height: 20),
           Text(
             '近 14 天趋势',
@@ -275,7 +326,7 @@ class _TrendChartPainter extends CustomPainter {
 
     var maxValue = 0;
     for (final point in trend) {
-      if (point.conversations > maxValue) maxValue = point.conversations;
+      if (point.consultations > maxValue) maxValue = point.consultations;
       if (point.messages > maxValue) maxValue = point.messages;
     }
     if (maxValue == 0) maxValue = 1;
@@ -316,7 +367,7 @@ class _TrendChartPainter extends CustomPainter {
 
     _drawSeries(
       canvas,
-      trend.map((p) => p.conversations).toList(),
+      trend.map((p) => p.consultations).toList(),
       xFor,
       yFor,
       conversationsColor,
@@ -338,7 +389,8 @@ class _TrendChartPainter extends CustomPainter {
       };
       for (final index in indices) {
         final painter = TextPainter(
-          text: TextSpan(text: _shortDate(trend[index].date), style: labelStyle),
+          text:
+              TextSpan(text: _shortDate(trend[index].date), style: labelStyle),
           textDirection: TextDirection.ltr,
         )..layout();
         final dx = (xFor(index) - painter.width / 2)
@@ -379,7 +431,7 @@ class _TrendChartPainter extends CustomPainter {
     canvas.drawPath(path, linePaint);
 
     final fillPath = Path.from(path)
-      ..lineTo(xFor(values.length - 1), yFor(0) + (yFor(values[0]) - yFor(0)))
+      ..lineTo(xFor(values.length - 1), yFor(0))
       ..lineTo(xFor(0), yFor(0))
       ..close();
     canvas.drawPath(fillPath, fillPaint);

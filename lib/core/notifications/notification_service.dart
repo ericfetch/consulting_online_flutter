@@ -20,7 +20,7 @@ class NotificationService {
 
   /// 提示音使用「通知」音量流，跟随通知音量而非媒体音量。
   static final AudioContext _alertContext = AudioContext(
-    android: AudioContextAndroid(
+    android: const AudioContextAndroid(
       contentType: AndroidContentType.sonification,
       usageType: AndroidUsageType.notification,
       audioFocus: AndroidAudioFocus.gainTransientMayDuck,
