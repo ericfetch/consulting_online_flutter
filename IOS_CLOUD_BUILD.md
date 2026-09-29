@@ -24,7 +24,7 @@
 
 iOS 使用独立构建号，避免把 `pubspec.yaml` 的 Android 日期构建号直接传给 Apple。营销版本号仍取自 `pubspec.yaml`（当前为 `1.0.1`）。同一 App 不要同时启动两次发布构建，避免同时取得相同的下一构建号。读取 Apple 失败时会停止，不会回退到旧号。
 
-云端固定 Flutter `3.38.10`、Xcode `26.2`、CocoaPods `1.16.2`，Android 工具链保持原配置。首次云端构建需验证现有依赖对该 iOS 工具链的兼容性。
+云端固定 Flutter `3.38.10`、Xcode `26.2`、CocoaPods `1.16.2`，Android 工具链保持原配置。iOS 最低支持版本为 `15.0`，Podfile、Runner 各构建配置及 AppFrameworkInfo.plist 保持一致。
 
 上传完成后需等待 Apple 处理，才能在 TestFlight 选择构建并分发给测试组。工作流不提交 App Store 审核，也不自动提交外部测试 Beta Review；`submit_to_testflight: false` 控制的是后者，不会关闭 IPA 上传。测试组沿用现有设置。
 
