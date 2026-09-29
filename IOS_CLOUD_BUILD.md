@@ -16,7 +16,7 @@
 3. 本项目采用 Codemagic 官方 CLI 自动签名。在本应用的 `sana_ios_signing` 变量组中，将固定 RSA 签名私钥保存为加密变量 `CERTIFICATE_PRIVATE_KEY`；它与 Apple API 的 `.p8` 是不同用途的密钥。
 4. 工作流初始化临时钥匙串，通过 `app-store-connect fetch-signing-files --type IOS_APP_STORE --create` 获取或创建匹配的分发证书及描述文件。后续构建复用同一私钥；不撤销已有证书，不需要原 Mac。
 5. 将本 Flutter 目录的代码同步到 Codemagic 实际连接的仓库。当前 Git 远程 `flutter-github` 是独立 Flutter 仓库 `ericfetch/consulting_online_flutter`，该仓库根目录应直接包含 `codemagic.yaml`、`pubspec.yaml`、`ios/`、`lib/` 和 `scripts/`。不要把 PC/后端父仓库直接推送到这里。
-6. Codemagic 选择最新分支 → Check for configuration file → Start new build → `ios-testflight`。
+6. Codemagic 选择 `main` → Check for configuration file → Start new build → `ios-testflight`。
 
 ## 每次构建的行为
 
@@ -31,6 +31,15 @@ iOS 使用独立构建号，避免把 `pubspec.yaml` 的 Android 日期构建号
 ## 费用约束
 
 保持 Codemagic Personal Account 免费计划，使用 `mac_mini_m2`。2026-09-29 核对本月免费额度使用量为 `0 / 500` 分钟，未启用付费订阅。工作流单次上限 60 分钟；启动前检查免费余量，不开通付费团队、额外额度或订阅。Apple 的“团队 API 密钥”是权限类型名称，不代表 Codemagic 付费团队。
+
+## 首次接入验证
+
+2026-09-29，工作流成功生成签名 IPA，并上传 `1.0.1 (3)` 到现有 TestFlight App。成功构建运行时间为 5 分 28 秒；包括首轮兼容性检查在内，本月累计使用 7 / 500 分钟免费额度，无付费交易。
+
+- [成功构建记录](https://codemagic.io/app/6a7fb7902a6549e95461aba5/build/6abb76a1cf925f42b220d2c8)
+- 构建源码提交：`9714d73f7f2dc1fe5cf8a5e5f1f54647eb0c56e2`
+- 本机 Flutter 静态检查、28 项 Flutter 测试和 3 项发布脚本测试通过；云端检查、测试、签名和上传通过。
+- 新 SDK 的弃用 info 不阻断构建，warning/error 仍阻断，保留旧 Android 工具链兼容性。
 
 ## 官方说明
 
