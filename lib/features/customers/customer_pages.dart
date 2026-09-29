@@ -1,17 +1,12 @@
+import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/repositories/customer_repository.dart';
+import '../../data/models/customer_followup.dart';
+import '../../core/utils/date_utils.dart';
+import 'customer_followup_panel.dart';
 import 'customer_status_provider.dart';
-
-const customerStages = {
-  'NEW': '新咨询',
-  'RECORDS_RECEIVED': '已收资料',
-  'MATCHING': '匹配医生',
-  'BOOKED': '已预约',
-  'SECOND_OPINION': '第二诊疗',
-  'CLOSED': '已结束'
-};
 
 class CustomerListPage extends ConsumerStatefulWidget {
   const CustomerListPage({super.key});
@@ -19,34 +14,70 @@ class CustomerListPage extends ConsumerStatefulWidget {
   ConsumerState<CustomerListPage> createState() => _CustomerListPageState();
 }
 
-class _CustomerListPageState extends ConsumerState<CustomerListPage> {
+class _CustomerListPageState extends ConsumerState<CustomerListPage>
+    with WidgetsBindingObserver {
   final _search = TextEditingController();
   List<Map<String, dynamic>> _items = [];
   bool _loading = true;
   String? _error;
   int _page = 1, _total = 0, _generation = 0;
+  String _stage = '', _ownerId = '';
+  List<FollowupOwner> _owners = [];
+  Timer? _timer;
+  bool _foreground = true;
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     Future.microtask(_load);
+    Future.microtask(() async {
+      try {
+        final owners =
+            await ref.read(customerRepositoryProvider).followupOwners();
+        if (mounted) setState(() => _owners = owners);
+      } catch (_) {
+        /* Listing remains available if owner options cannot load. */
+      }
+    });
+    _timer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (mounted &&
+          _foreground &&
+          !_loading &&
+          (ModalRoute.of(context)?.isCurrent ?? true)) {
+        _load(page: _page, quiet: true);
+      }
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    if (_foreground && (ModalRoute.of(context)?.isCurrent ?? true)) {
+      _load(page: _page, quiet: true);
+    }
   }
 
   @override
   void dispose() {
+    _timer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _search.dispose();
     super.dispose();
   }
 
-  Future<void> _load({int page = 1}) async {
+  Future<void> _load({int page = 1, bool quiet = false}) async {
+    if (!mounted || (quiet && _loading)) return;
     final generation = ++_generation;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final data = await ref
-          .read(customerRepositoryProvider)
-          .list(search: _search.text.trim(), page: page);
+      final data = await ref.read(customerRepositoryProvider).list(
+          search: _search.text.trim(),
+          page: page,
+          followupStage: _stage,
+          ownerId: _ownerId);
       if (!mounted || generation != _generation) return;
       setState(() {
         _items = (data['items'] as List)
@@ -76,10 +107,49 @@ class _CustomerListPageState extends ConsumerState<CustomerListPage> {
                 controller: _search,
                 onSubmitted: (_) => _load(),
                 decoration: InputDecoration(
-                    hintText: '搜索姓名、病种或国家',
+                    hintText: '搜索姓名、手机号、病种或国家',
                     suffixIcon: IconButton(
                         icon: const Icon(Icons.search),
                         onPressed: () => _load())))),
+        Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: Row(children: [
+              Expanded(
+                  child: DropdownButtonFormField<String>(
+                value: _stage,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: '跟踪阶段'),
+                items: [
+                  const DropdownMenuItem(value: '', child: Text('全部阶段')),
+                  ...followupStages.entries.map((e) => DropdownMenuItem(
+                      value: e.key,
+                      child: Text(e.value, overflow: TextOverflow.ellipsis)))
+                ],
+                onChanged: (value) {
+                  setState(() => _stage = value!);
+                  _load();
+                },
+              )),
+              const SizedBox(width: 10),
+              Expanded(
+                  child: DropdownButtonFormField<String>(
+                value: _ownerId,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: '负责客服'),
+                items: [
+                  const DropdownMenuItem(value: '', child: Text('全部负责人')),
+                  const DropdownMenuItem(
+                      value: 'unassigned', child: Text('未指定')),
+                  ..._owners.map((o) => DropdownMenuItem(
+                      value: o.id,
+                      child: Text(o.name, overflow: TextOverflow.ellipsis)))
+                ],
+                onChanged: (value) {
+                  setState(() => _ownerId = value!);
+                  _load();
+                },
+              )),
+            ])),
         if (_loading) const LinearProgressIndicator(),
         if (_error != null)
           ListTile(
@@ -103,14 +173,29 @@ class _CustomerListPageState extends ConsumerState<CustomerListPage> {
                                 (item['name'] as String?)?.isNotEmpty == true
                                     ? item['name']
                                     : '未填写姓名'),
-                            subtitle: Text([
-                              item['country'],
-                              item['condition'],
-                              if (item['summarizedAt'] != null) '已汇总'
-                            ]
-                                .whereType<String>()
-                                .where((s) => s.isNotEmpty)
-                                .join(' · ')),
+                            subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text([
+                                    item['country'],
+                                    item['condition'],
+                                    if (item['summarizedAt'] != null) '已汇总'
+                                  ]
+                                      .whereType<String>()
+                                      .where((s) => s.isNotEmpty)
+                                      .join(' · ')),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                      '${followupStages[item['followupStage']] ?? '待通知'}${item['notifiedAt'] != null ? ' · 已通知' : ''}',
+                                      style: TextStyle(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .primary,
+                                          fontSize: 12)),
+                                  Text(
+                                      '负责人：${item['followupOwner']?['name'] ?? '未指定'}${item['followedUpAt'] == null ? '' : '\n最近跟进 ${AppDateUtils.formatDateTime(DateTime.tryParse(item['followedUpAt']))}'}',
+                                      style: const TextStyle(fontSize: 11)),
+                                ]),
                             trailing: const Icon(Icons.chevron_right),
                             onTap: () async {
                               await Navigator.push(
@@ -152,7 +237,7 @@ class _CustomerDetailPageState extends ConsumerState<CustomerDetailPage> {
       key: TextEditingController()
   };
   Map<String, dynamic>? _record;
-  String _gender = '', _stage = 'NEW';
+  String _gender = '';
   bool _busy = false, _dirty = false;
   String? _error;
   @override
@@ -186,7 +271,6 @@ class _CustomerDetailPageState extends ConsumerState<CustomerDetailPage> {
       setState(() {
         _record = record;
         _gender = record['gender'] ?? '';
-        _stage = record['stage'] ?? 'NEW';
         _dirty = false;
       });
     } catch (error) {
@@ -217,7 +301,6 @@ class _CustomerDetailPageState extends ConsumerState<CustomerDetailPage> {
           key: _fields[key]!.text.trim(),
         'age': age,
         'gender': _gender,
-        'stage': _stage,
       });
       if (!mounted) return;
       await _load();
@@ -327,6 +410,11 @@ class _CustomerDetailPageState extends ConsumerState<CustomerDetailPage> {
                     child: SelectableText(
                         'WhatsApp ${_record!['whatsappPhone']} · 仅内部',
                         style: const TextStyle(fontSize: 13))),
+              CustomerFollowupPanel(
+                  key: ValueKey(_record!['id']),
+                  customerId: _record!['id'],
+                  unsaved: _dirty),
+              const SizedBox(height: 22),
               for (final entry in {
                 'name': '姓名',
                 'country': '国家 / 地区',
@@ -367,20 +455,6 @@ class _CustomerDetailPageState extends ConsumerState<CustomerDetailPage> {
                       ? null
                       : (value) => setState(() {
                             _gender = value!;
-                            _dirty = true;
-                          })),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                  value: _stage,
-                  decoration: const InputDecoration(labelText: '跟进阶段'),
-                  items: customerStages.entries
-                      .map((e) =>
-                          DropdownMenuItem(value: e.key, child: Text(e.value)))
-                      .toList(),
-                  onChanged: _busy
-                      ? null
-                      : (value) => setState(() {
-                            _stage = value!;
                             _dirty = true;
                           })),
               const SizedBox(height: 22),
