@@ -94,7 +94,8 @@ workflows:
         script: |
           set -euo pipefail
           python3 -m unittest discover -s scripts -p 'test_*.py'
-          flutter analyze --no-pub
+          # 保持旧 Android 工具链兼容；新版 SDK 的弃用 info 不阻断，warning/error 仍失败。
+          flutter analyze --no-pub --no-fatal-infos
           flutter test --no-pub
 
       - name: Install iOS dependencies
